@@ -22,6 +22,10 @@ contextBridge.exposeInMainWorld('edj', {
   pathForFile: (file) => {
     try { return webUtils.getPathForFile(file); } catch (e) { return ''; }
   },
+  readAudio: (file) => ipcRenderer.invoke('file:read-audio', file),
+  remoteConfigure: (opts) => ipcRenderer.invoke('remote:configure', opts),
+  remoteState: (st) => ipcRenderer.send('remote:state', st),
+  onRemoteCommand: (cb) => ipcRenderer.on('remote:command', (_e, cmd) => cb(cmd)),
   onSetOpenRequest: (cb) => {
     setOpenHandler = cb;
     if (pendingSetFile) { const f = pendingSetFile; pendingSetFile = null; cb(f); }

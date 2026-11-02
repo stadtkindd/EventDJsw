@@ -138,7 +138,66 @@ Mit **♪ Test** spielt EventDJ einen kurzen Prüfton auf dem jeweiligen Ausgang
 - **Set importieren** ersetzt das aktuelle Set. Die Geräteeinstellungen des PCs (Ausgänge, Lautstärken) bleiben erhalten. Ein Doppelklick auf eine `.edjset`-Datei öffnet sie direkt in EventDJ (installierte Version).
 - **Bibliothek aufräumen** löscht Audiodateien aus der Bibliothek, die keiner Kachel mehr zugeordnet sind.
 
-## 11. Tastenkürzel
+## 11. Wellenform: Start- und Endpunkt
+
+Kachel bearbeiten → **Audio**. Unter der Datei siehst du die **Wellenform**:
+
+- **grüner Marker** = Startpunkt, **roter Marker** = Endpunkt. Marker mit Finger oder Maus ziehen oder einfach ins Bild tippen (der nähere Marker springt dorthin). Feineinstellung mit **−/+** in 0,1-s-Schritten.
+- Der dunkle Bereich wird nicht gespielt. Der rötliche Verlauf vor dem Endpunkt zeigt das **automatische Ausblenden** (Länge = Fade-Out der Kachel).
+- Mit **Endlosschleife** springt die Wiedergabe am Endpunkt zurück zum Startpunkt – ideal, um nur den Refrain zu loopen.
+- **🎧 Vorhören** spielt den gewählten Ausschnitt auf dem Kopfhörer, die weiße Linie zeigt die Position.
+- **Zurücksetzen** = ganze Datei.
+
+Auf der Kachel zeigt ⇥ an, dass ein Endpunkt gesetzt ist; die angezeigte Länge ist die des Ausschnitts.
+
+## 12. Lautheit angleichen & Pegelanzeige
+
+Jingles aus verschiedenen Quellen sind oft unterschiedlich laut. EventDJ misst die **Lautheit (LUFS)** jeder Datei nach dem Rundfunkstandard ITU-R BS.1770 und gleicht sie auf eine **Ziel-Lautheit** an (Werkseinstellung −16 LUFS).
+
+- Neue Dateien werden automatisch analysiert (abschaltbar unter *Einstellungen → Audio → Lautheit*).
+- Kachel bearbeiten → **Audio → Lautheit / Normalisierung**: gemessener Wert, Spitzenpegel und die **Pegelanpassung** in dB (von Hand änderbar, −24 … +24 dB). Leise Dateien werden höchstens so weit angehoben, dass die Spitze −1 dBFS nicht überschreitet.
+- **Einstellungen → Audio → „Alle Kacheln analysieren & normalisieren“** gleicht ein bestehendes Set in einem Rutsch an, z. B. nach einer Änderung der Ziel-Lautheit.
+- Die **Pegelanzeige** in der Fußzeile zeigt links/rechts den Master-Pegel (grün bis −12 dB, gelb bis −3 dB, rot darüber, weiße Linie = Spitzenwert). **CLIP** leuchtet bei Übersteuerung – dann Master oder Kachel-Lautstärke etwas zurücknehmen.
+
+## 13. Playlists und Hintergrundmusik (Ducking)
+
+**Playlist anlegen:** Kachel bearbeiten → **Audio → Art der Kachel: Playlist**. Titel über *+ Titel hinzufügen …* oder per Drag & Drop aus dem Explorer in die Liste ziehen; Reihenfolge mit ▲▼ ändern. Optionen: **Zufällige Reihenfolge**, unter *Wiedergabe* **Playlist wiederholen**.
+
+Antippen startet die Playlist, erneutes Antippen blendet sie aus. Der aktuelle Titel steht auf der Kachel (♪) und in der Fußzeile. **Nächster Titel**: ⏭ in der Fußzeile oder Kontextmenü der Kachel.
+
+**Hintergrundmusik:** Kachel bearbeiten → **Wiedergabe → Rolle: Hintergrundmusik** (Symbol ▽ auf der Kachel, „BG“ in der Fußzeile). Solche Kacheln
+
+- laufen weiter, wenn ein Jingle startet – sie werden währenddessen automatisch **abgesenkt** (Ducking) und kommen danach sanft zurück,
+- werden nur durch eine andere Hintergrundmusik abgelöst (im Modus „Laufenden ausblenden“).
+
+Wie stark und wie schnell abgesenkt wird, stellst du unter *Einstellungen → Wiedergabe → Hintergrundmusik & Ducking* ein (Werkseinstellung 25 % ≈ −12 dB, 500 ms). Typisch: Pausenmusik-Playlist als Hintergrundmusik, Durchsagen-Jingles und Effekte darüber.
+
+## 14. Fernsteuerung: Tastatur, MIDI, Stream Deck, Tablet
+
+**Tastenkürzel pro Kachel:** Kachel bearbeiten → **Steuerung → ⌨ Taste zuweisen** → gewünschte Taste drücken (z. B. `F1`, `Q`, `Num5`, `Strg+Umschalt+A`). Das Kürzel wirkt im Live-Modus in **allen** Reitern und steht klein auf der Kachel. Reserviert sind `Esc`, `F11`, `F12`, `Strg+E`, `Strg+R`, `Strg+1…9`. Wird ein Kürzel neu vergeben, verliert die bisherige Kachel es automatisch.
+
+**MIDI-Controller:** USB-MIDI-Gerät anschließen (Pad-Controller, Keyboard, Launchpad …). Kachel bearbeiten → **Steuerung → ♫ MIDI zuweisen** → Pad/Taste/Regler betätigen. Erkannt werden Noten, Controller (CC, ausgelöst beim Überschreiten der Mitte) und Programmwechsel. Unter *Einstellungen → Fernsteuerung* kannst du außerdem **„Sofort stoppen“** und **„Alles ausblenden“** auf MIDI-Tasten legen. Die Tabelle dort zeigt alle Zuweisungen.
+
+**Elgato Stream Deck:**
+- *Einfach:* Aktion **„Hotkey“** (System) auf die Taste legen und das Tastenkürzel der Kachel eintragen. Tipp: `F13`–`F24` gibt es auf keiner normalen Tastatur und kollidieren daher nie.
+- *Ohne Tastenkürzel:* HTTP-Schnittstelle einschalten (s. u.) und mit einem Web-Request-Plugin (z. B. „API Ninja“) die Adresse der Kachel aufrufen.
+
+**HTTP-Schnittstelle / Bitfocus Companion:** *Einstellungen → Fernsteuerung → HTTP-Fernsteuerung aktiv* (Port 8765). Die Adresse jeder Kachel steht im Kachel-Dialog unter *Steuerung* (Knopf *Kopieren*).
+
+| Adresse | Wirkung |
+|---|---|
+| `/api/toggle/<id>` | wie Antippen (Start bzw. Ausblenden) |
+| `/api/play/<id>` · `/api/stop/<id>` | nur starten · nur ausblenden |
+| `/api/next/<id>` | Playlist: nächster Titel |
+| `/api/key/F1` | Kachel mit diesem Tastenkürzel |
+| `/api/fade` · `/api/stopall` | alles ausblenden · sofort alles stoppen |
+| `/api/tab/2` | zu Reiter 2 wechseln |
+| `/api/reset` | alle Zähler zurücksetzen |
+| `/api/state` | Reiter, Kacheln und laufende Jingles als JSON |
+
+**Tablet/Handy als Fernbedienung:** zusätzlich *Auch im Netzwerk erreichbar* einschalten und auf dem Tablet die angezeigte Adresse (z. B. `http://192.168.1.20:8765/`) im Browser öffnen – dort erscheinen alle Reiter und Kacheln als Buttons. Windows fragt beim ersten Mal ggf. nach einer Firewall-Freigabe. Nur in vertrauenswürdigen Netzwerken verwenden (kein Passwortschutz).
+
+## 15. Tastenkürzel
 
 | Taste | Funktion |
 |---|---|
@@ -147,13 +206,18 @@ Mit **♪ Test** spielt EventDJ einen kurzen Prüfton auf dem jeweiligen Ausgang
 | `Strg+1` … `Strg+9` | Reiter 1–9 |
 | `Strg+E` | Bearbeitungsmodus ein/aus |
 | `F11` | Vollbild |
+| eigene Kürzel | Kachel auslösen (Kachel-Dialog → Steuerung) |
 
-## 12. Häufige Fragen
+## 16. Häufige Fragen
 
 **Die Gerätenamen heißen nur „Ausgabegerät 1, 2 …“.** – Windows gibt die Namen erst nach einer Medienfreigabe heraus. EventDJ fragt diese automatisch an; ist kein Mikrofon vorhanden, bleiben die Namen evtl. generisch. Mit **♪ Test** findest du das richtige Gerät.
 
 **Eine Kachel ist grau und zeigt „Datei fehlt“.** – Die Audiodatei wurde verschoben/gelöscht (nur möglich, wenn das Kopieren in die Bibliothek ausgeschaltet war). Kachel bearbeiten → *Datei wählen …* oder neue Datei auf die Kachel ziehen.
 
 **Eine Datei lässt sich nicht abspielen.** – Vermutlich ein nicht unterstützter Codec (z. B. WMA oder ein exotisches M4A). In MP3 oder WAV umwandeln.
+
+**Der MIDI-Controller wird nicht erkannt.** – Gerät vor dem Start von EventDJ anschließen bzw. nach dem Anschließen kurz warten; unter *Einstellungen → Fernsteuerung* steht, welche Geräte verbunden sind. Manche Geräte brauchen einen Windows-Treiber des Herstellers.
+
+**Die Stream-Deck-Hotkeys lösen nichts aus.** – EventDJ muss das aktive Fenster sein (Tastenkürzel gehen an das Fenster im Vordergrund). Unabhängig vom Fokus funktioniert die HTTP-Schnittstelle.
 
 **ASIO?** – EventDJ nutzt die Windows-Audioausgabe (WASAPI, gemeinsamer Modus). ASIO-Treiber werden nicht direkt angesprochen; die meisten Interfaces stellen aber zusätzlich ein normales Windows-Gerät bereit.

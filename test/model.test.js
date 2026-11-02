@@ -73,4 +73,31 @@ test('Audioformate & Titel', () => {
   assert.strictEqual(M.titleFromFileName('C:\\a\\Ironie_Gegner.wav'), 'Ironie Gegner');
 });
 
+test('Playlist, Rolle, Fernsteuerung werden normalisiert', () => {
+  const t = M.normalizeTile({ kind: 'playlist', playlist: [{ file: 'a.mp3', gainDb: 99 }, { file: '' }], role: 'bed', hotkey: 'F1', midi: 'note:10:36', endAt: -3 });
+  assert.strictEqual(t.kind, 'playlist');
+  assert.strictEqual(t.playlist.length, 1);
+  assert.strictEqual(t.playlist[0].gainDb, 24);
+  assert.strictEqual(t.role, 'bed');
+  assert.strictEqual(t.endAt, 0);
+  assert.deepStrictEqual(M.tileFiles(t), ['a.mp3']);
+  assert.ok(M.tileHasAudio(t));
+  assert.ok(!M.tileHasAudio(M.normalizeTile({ kind: 'playlist' })));
+});
+
+test('Normalisierungs-Verstärkung mit Spitzenbegrenzung', () => {
+  assert.strictEqual(M.normalizeGain(-22, 0.1, -16), 6);       // genug Reserve
+  assert.strictEqual(M.normalizeGain(-22, 0.7, -16), 2.1);     // Spitze −3,1 dBFS → max. +2,1 dB
+  assert.strictEqual(M.normalizeGain(-10, 1, -16), -6);
+  assert.strictEqual(M.normalizeGain(null, 1, -16), 0);
+});
+
+test('Neue Einstellungen mit Standardwerten', () => {
+  const c = M.normalizeConfig({ settings: { httpPort: 80, duckLevel: 3 } });
+  assert.strictEqual(c.settings.httpPort, 1024);
+  assert.strictEqual(c.settings.duckLevel, 1);
+  assert.strictEqual(c.settings.targetLufs, -16);
+  assert.strictEqual(c.settings.httpEnabled, false);
+});
+
 console.log('\n' + n + ' Tests bestanden.');

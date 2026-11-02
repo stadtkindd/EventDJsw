@@ -1,5 +1,18 @@
 # Änderungen
 
+## 1.1.0 – 2026-11-02
+
+- **Wellenform-Editor:** Start- und Endpunkt per Touch/Maus setzen, automatisches Ausblenden am Endpunkt, Schleife zwischen Start und Ende, Abspielposition beim Vorhören
+- **Lautheit:** LUFS-Messung (ITU-R BS.1770) und Normalisierung auf eine Ziel-Lautheit – automatisch beim Import oder für alle Kacheln auf einmal; manuelle Pegelanpassung in dB
+- **Pegelanzeige** (VU-Meter L/R mit Spitzenwert und Clip-Warnung) in der Fußzeile
+- **Playlists:** Kacheln mit mehreren Titeln, Zufallsreihenfolge, Wiederholen, „Nächster Titel“
+- **Hintergrundmusik mit Ducking:** wird während eines Jingles automatisch abgesenkt (Pegel und Zeit einstellbar)
+- **Tastenkürzel pro Kachel** (auch für Elgato Stream Deck „Hotkey“)
+- **MIDI-Controller** mit Lernfunktion, globale MIDI-Tasten für Stoppen/Ausblenden
+- **HTTP-Schnittstelle** für Stream Deck/Bitfocus Companion und Browser-Fernbedienung (Tablet/Handy)
+- Kachel-Dialog und Einstellungen in übersichtliche Seiten gegliedert
+- Audio-Engine auf Web Audio umgestellt (klickfreie Fades, Verstärkung über 100 % für Normalisierung)
+
 ## 1.0.0 – 2026-11-02
 
 Erste Version.

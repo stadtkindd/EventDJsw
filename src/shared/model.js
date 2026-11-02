@@ -50,7 +50,21 @@
       showRemaining: true,
       tileScale: 1,            // globaler Faktor für Schriftgrößen
       longPressMs: 550,
-      confirmReset: true
+      confirmReset: true,
+      // Ducking: Hintergrundmusik wird abgesenkt, solange ein Jingle läuft
+      duckLevel: 0.25,
+      duckFadeMs: 500,
+      // Lautheit
+      normalizeOnImport: true,
+      targetLufs: -16,
+      showMeter: true,
+      // Fernsteuerung
+      midiEnabled: true,
+      midiStop: '',            // MIDI-Zuweisung "Sofort stoppen"
+      midiFade: '',            // MIDI-Zuweisung "Alles ausblenden"
+      httpEnabled: false,      // lokale HTTP-Schnittstelle (Stream Deck, Companion)
+      httpPort: 8765,
+      httpLan: false           // auch im Netzwerk erreichbar (Tablet/Handy als Fernbedienung)
     };
   }
 
@@ -116,9 +130,58 @@
       fadeOut: t.fadeOut == null ? null : clamp(t.fadeOut, 0, 20000, null),
       volume: clamp(t.volume, 0, 1, 1),
       startAt: clamp(t.startAt, 0, 86400, 0),
+      endAt: clamp(t.endAt, 0, 86400, 0),          // 0 = bis Dateiende; sonst Auto-Ausblenden bis zu diesem Punkt
       loop: !!t.loop,
+      // Lautheit (Normalisierung): Verstärkung in dB, gemessene Lautheit (LUFS) und Spitzenpegel
+      gainDb: clamp(t.gainDb, -24, 24, 0),
+      loudness: t.loudness == null ? null : clamp(t.loudness, -99, 10, null),
+      peak: t.peak == null ? null : clamp(t.peak, 0, 4, null),
+      // Art: Einzel-Jingle oder Playlist; Rolle: normal oder Hintergrund (wird bei Jingles abgesenkt)
+      kind: t.kind === 'playlist' ? 'playlist' : 'single',
+      playlist: Array.isArray(t.playlist) ? t.playlist.map(normalizeTrack).filter((x) => x.file) : [],
+      shuffle: !!t.shuffle,
+      role: t.role === 'bed' ? 'bed' : 'normal',
+      // Fernsteuerung
+      hotkey: str(t.hotkey, ''),
+      midi: str(t.midi, ''),
       playCount: Math.max(0, Math.floor(clamp(t.playCount, 0, 1e9, 0)))
     };
+  }
+
+  function normalizeTrack(x) {
+    x = x || {};
+    return {
+      file: str(x.file, ''),
+      fileName: str(x.fileName, ''),
+      duration: clamp(x.duration, 0, 86400, 0),
+      gainDb: clamp(x.gainDb, -24, 24, 0),
+      loudness: x.loudness == null ? null : clamp(x.loudness, -99, 10, null),
+      peak: x.peak == null ? null : clamp(x.peak, 0, 4, null)
+    };
+  }
+
+  /** Alle Audiodateien einer Kachel (Einzeldatei bzw. Playlist) */
+  function tileFiles(tile) {
+    const out = [];
+    if (tile.file) out.push(tile.file);
+    (tile.playlist || []).forEach((x) => x.file && out.push(x.file));
+    return out;
+  }
+
+  /** Abspielbar? */
+  function tileHasAudio(tile) {
+    return tile.kind === 'playlist' ? tile.playlist.length > 0 : !!tile.file;
+  }
+
+  /** Normalisierungs-Verstärkung (dB), begrenzt durch Spitzenpegel (max. −1 dBFS) */
+  function normalizeGain(loudness, peak, target) {
+    if (loudness == null || !Number.isFinite(loudness)) return 0;
+    let g = target - loudness;
+    if (peak && peak > 0) {
+      const headroom = -1 - 20 * Math.log10(peak);
+      g = Math.min(g, headroom);
+    }
+    return Math.round(Math.max(-24, Math.min(24, g)) * 10) / 10;
   }
 
   function normalizeTab(t) {
@@ -173,7 +236,18 @@
       showRemaining: s.showRemaining !== false,
       tileScale: clamp(s.tileScale, 0.5, 2.5, 1),
       longPressMs: clamp(s.longPressMs, 250, 2000, 550),
-      confirmReset: s.confirmReset !== false
+      confirmReset: s.confirmReset !== false,
+      duckLevel: clamp(s.duckLevel, 0, 1, 0.25),
+      duckFadeMs: clamp(s.duckFadeMs, 0, 5000, 500),
+      normalizeOnImport: s.normalizeOnImport !== false,
+      targetLufs: clamp(s.targetLufs, -30, -6, -16),
+      showMeter: s.showMeter !== false,
+      midiEnabled: s.midiEnabled !== false,
+      midiStop: str(s.midiStop, ''),
+      midiFade: str(s.midiFade, ''),
+      httpEnabled: !!s.httpEnabled,
+      httpPort: Math.floor(clamp(s.httpPort, 1024, 65535, 8765)),
+      httpLan: !!s.httpLan
     };
     let styles = Array.isArray(cfg.styles) ? cfg.styles.map(normalizeStyle) : defaultStyles();
     if (!styles.length) styles = defaultStyles();
@@ -242,7 +316,8 @@
 
   const api = {
     SCHEMA_VERSION, AUDIO_EXTENSIONS, uid, defaultConfig, defaultSettings, defaultStyles,
-    newTab, newTile, normalizeConfig, normalizeTile, normalizeTab, normalizeStyle,
+    newTab, newTile, normalizeConfig, normalizeTile, normalizeTab, normalizeStyle, normalizeTrack,
+    tileFiles, tileHasAudio, normalizeGain,
     resolveLook, effectiveRows, freeSlots, moveTile, resetCounters, isAudioFile, titleFromFileName
   };
 

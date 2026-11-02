@@ -18,6 +18,10 @@
 | **Audio-Ausgang** | **Master** frei wählbar: Lautsprecher/Klinke, USB-Soundkarte, HDMI, Bluetooth … Dazu ein separater **Vorhör-Ausgang** (Kopfhörer) zum Reinhören, ohne dass das Publikum etwas hört. |
 | **Sicherheit im Live-Betrieb** | Bearbeitungsmodus getrennt vom Live-Modus, großer STOP-Button, „Ausblenden“ für alles, Schutz vor versehentlichem Neuladen, automatische Speicherung mit Backup. |
 | **Sets** | Komplettes Set (Reiter, Kacheln, Stile **inkl. Audiodateien**) als `.edjset` exportieren und auf einem anderen PC importieren. |
+| **Wellenform-Editor** | Start- und Endpunkt per Finger oder Maus direkt in der Wellenform setzen. Am Endpunkt blendet der Jingle automatisch aus; Schleifen laufen zwischen Start und Ende. |
+| **Lautheit** | Automatische Messung (LUFS nach ITU-R BS.1770) und Angleichung aller Jingles auf eine Ziel-Lautheit – kein Jingle fällt mehr aus der Reihe. Pegelanzeige (VU-Meter) mit Clip-Warnung. |
+| **Playlists & Ducking** | Kacheln mit mehreren Titeln (nacheinander oder zufällig, wiederholbar). Als *Hintergrundmusik* laufen sie unter Jingles weiter und werden währenddessen automatisch abgesenkt. |
+| **Fernsteuerung** | Tastenkürzel pro Kachel, **MIDI-Controller** (Pads, Tasten, Regler) mit Lernfunktion, **HTTP-Schnittstelle** für Elgato Stream Deck / Bitfocus Companion und eine Browser-Fernbedienung fürs Tablet/Handy. |
 
 ## Download & Installation
 
@@ -40,6 +44,12 @@
 
 Ausführliche Anleitung: **[docs/BEDIENUNGSANLEITUNG.md](docs/BEDIENUNGSANLEITUNG.md)**
 
+| Wellenform & Lautheit | Playlist mit Ducking |
+|---|---|
+| ![Wellenform-Editor](docs/screenshots/wellenform.png) | ![Playlist-Editor](docs/screenshots/playlist.png) |
+| **Fernsteuerung (MIDI, HTTP, Stream Deck)** | **Hintergrundmusik wird unter dem Jingle abgesenkt** |
+| ![Fernsteuerung](docs/screenshots/fernsteuerung.png) | ![Ducking im Live-Betrieb](docs/screenshots/ducking.png) |
+
 ## Bedienung im Überblick
 
 | Aktion | Touch | Maus / Tastatur |
@@ -49,6 +59,8 @@ Ausführliche Anleitung: **[docs/BEDIENUNGSANLEITUNG.md](docs/BEDIENUNGSANLEITUN
 | Alles ausblenden | „Ausblenden“ | `Esc` |
 | Sofort alles stoppen | „STOP“ | `Umschalt+Esc` |
 | Reiter wechseln | Reiter antippen | `Strg+1` … `Strg+9` |
+| Jingle per Tastenkürzel / MIDI | – | eigene Taste (z. B. `F1`) bzw. Pad am Controller |
+| Playlist: nächster Titel | lange drücken → *Nächster Titel* oder ⏭ in der Fußzeile | Rechtsklick |
 | Bearbeitungsmodus | ✎ | `Strg+E` |
 | Vollbild | ⛶ | `F11` |
 

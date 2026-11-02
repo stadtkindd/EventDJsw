@@ -119,23 +119,26 @@ function exportSet(cfg, target) {
   const zip = new AdmZip();
   const added = new Map();
   let missing = 0;
+  const pack = (file) => {
+    if (!file) return '';
+    if (!fs.existsSync(file)) { missing++; return ''; }
+    const key = path.resolve(file).toLowerCase();
+    if (!added.has(key)) {
+      const ext = path.extname(file);
+      let name = safeName(path.basename(file));
+      let n = 1;
+      const names = new Set(added.values());
+      while (names.has('audio/' + name)) name = safeName(path.basename(file, ext)) + ' (' + n++ + ')' + ext;
+      zip.addLocalFile(file, 'audio', name);
+      added.set(key, 'audio/' + name);
+    }
+    return added.get(key);
+  };
   clean.tabs.forEach((tab) =>
     tab.tiles.forEach((tile) => {
-      if (!tile.file) return;
-      if (!fs.existsSync(tile.file)) { missing++; tile.file = ''; return; }
-      const key = path.resolve(tile.file).toLowerCase();
-      if (!added.has(key)) {
-        let name = safeName(path.basename(tile.file));
-        let n = 1;
-        const names = new Set(added.values());
-        while (names.has('audio/' + name)) {
-          const ext = path.extname(tile.file);
-          name = safeName(path.basename(tile.file, ext)) + ' (' + n++ + ')' + ext;
-        }
-        zip.addLocalFile(tile.file, 'audio', name);
-        added.set(key, 'audio/' + name);
-      }
-      tile.file = added.get(key);
+      tile.file = pack(tile.file);
+      tile.playlist.forEach((tr) => (tr.file = pack(tr.file)));
+      tile.playlist = tile.playlist.filter((tr) => tr.file);
     })
   );
   zip.addFile('set.json', Buffer.from(JSON.stringify(clean, null, 2), 'utf8'));
@@ -166,6 +169,8 @@ function importSet(file) {
     cfg.tabs.forEach((tab) =>
       tab.tiles.forEach((tile) => {
         tile.file = map.get(tile.file) || '';
+        tile.playlist.forEach((tr) => (tr.file = map.get(tr.file) || ''));
+        tile.playlist = tile.playlist.filter((tr) => tr.file);
       })
     );
     return { ok: true, config: cfg, files: map.size };
@@ -174,7 +179,15 @@ function importSet(file) {
   }
 }
 
+/** Audiodatei als Bytes lesen (für Wellenform & Lautheitsanalyse) */
+function readAudio(file) {
+  const st = fs.statSync(file);
+  if (st.size > 300 * 1024 * 1024) throw new Error('Datei zu groß für die Analyse');
+  return fs.readFileSync(file);
+}
+
 module.exports = {
+  readAudio,
   init, dataDir, libraryDir, isPortable, loadConfig, saveConfig,
   copyToLibrary, cleanupLibrary, exportSet, importSet
 };

@@ -7,9 +7,13 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, session, screen } = re
 const path = require('path');
 const fs = require('fs');
 const store = require('./store');
+const remote = require('./remote');
 const Model = require('../shared/model');
 
 const isDev = process.argv.includes('--dev');
+
+// Audio darf ohne vorherigen Klick starten (Fernsteuerung per MIDI/HTTP direkt nach dem Start)
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 // Fester Datenordner: %APPDATA%\EventDJ (portable Variante: siehe store.js)
 app.setName('EventDJ');
@@ -98,18 +102,24 @@ app.whenReady().then(() => {
   // Zugriff auf Ausgabegeräte-Namen (enumerateDevices liefert sonst leere Labels)
   const ses = session.defaultSession;
   ses.setPermissionCheckHandler((_wc, permission) =>
-    ['media', 'speaker-selection', 'audioCapture'].includes(permission)
+    ['media', 'speaker-selection', 'audioCapture', 'midi'].includes(permission)
   );
   ses.setPermissionRequestHandler((_wc, permission, cb) =>
-    cb(['media', 'speaker-selection', 'audioCapture'].includes(permission))
+    cb(['media', 'speaker-selection', 'audioCapture', 'midi'].includes(permission))
   );
   if (ses.setDevicePermissionHandler) ses.setDevicePermissionHandler(() => true);
 
   registerIpc();
   createWindow();
+  remote.setCommandHandler((cmd) => {
+    if (mainWindow) mainWindow.webContents.send('remote:command', cmd);
+  });
 });
 
-app.on('window-all-closed', () => app.quit());
+app.on('window-all-closed', () => {
+  remote.stop();
+  app.quit();
+});
 
 // ---------------------------------------------------------------- IPC
 
@@ -193,6 +203,14 @@ function registerIpc() {
     mainWindow.setFullScreen(next);
     return next;
   });
+
+  ipcMain.handle('file:read-audio', (_e, file) => {
+    const buf = store.readAudio(file);
+    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+  });
+
+  ipcMain.handle('remote:configure', (_e, opts) => remote.configure(opts));
+  ipcMain.on('remote:state', (_e, st) => remote.setState(st));
 
   ipcMain.handle('app:open-data-dir', () => shell.openPath(store.dataDir()));
   ipcMain.handle('app:open-url', (_e, url) => {

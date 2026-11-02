@@ -83,6 +83,7 @@
     saveTimer = setTimeout(() => {
       saveTimer = null;
       api.saveConfig(cfg).catch((e) => toast('Speichern fehlgeschlagen: ' + e, 'err'));
+      publishState();
     }, 300);
   }
 
@@ -101,6 +102,23 @@
   function fadeInOf(tile) { return tile.fadeIn == null ? cfg.settings.defaultFadeIn : tile.fadeIn; }
   function fadeOutOf(tile) { return tile.fadeOut == null ? cfg.settings.defaultFadeOut : tile.fadeOut; }
 
+  /** angezeigte Länge: Einzeldatei (ggf. Start–Ende) bzw. Summe der Playlist */
+  function tileLength(tile) {
+    if (tile.kind === 'playlist') return tile.playlist.reduce((a, x) => a + (x.duration || 0), 0);
+    if (!tile.duration) return 0;
+    const end = tile.endAt > 0 ? Math.min(tile.endAt, tile.duration) : tile.duration;
+    return Math.max(0, end - (tile.startAt || 0));
+  }
+  function fmtTotal(tile) { const l = tileLength(tile); return l ? fmtTime(l) : ''; }
+  function flagTitle(tile) {
+    const t = [];
+    if (tile.kind === 'playlist') t.push('Playlist mit ' + tile.playlist.length + ' Titeln' + (tile.shuffle ? ', zufällig' : ''));
+    if (tile.role === 'bed') t.push('Hintergrundmusik (wird bei Jingles abgesenkt)');
+    if (tile.loop) t.push(tile.kind === 'playlist' ? 'wiederholen' : 'Endlosschleife');
+    if (tile.endAt > 0 && tile.kind !== 'playlist') t.push('Endpunkt gesetzt');
+    return t.join(' · ');
+  }
+
   // ================================================================ Start
 
   async function init() {
@@ -109,6 +127,7 @@
 
     A.setBusVolume('master', cfg.settings.masterVolume);
     A.setBusVolume('cue', cfg.settings.cueVolume);
+    A.setDucking(cfg.settings.duckLevel, cfg.settings.duckFadeMs);
     await refreshDevices(true);
 
     A.on('change', onVoiceChange);
@@ -122,6 +141,10 @@
     bindDragDrop();
     bindKeys();
     if (api.onSetOpenRequest) api.onSetOpenRequest((file) => importSet(file));
+    if (api.onRemoteCommand) api.onRemoteCommand(onRemoteCommand);
+    initMidi();
+    applyRemoteSettings(true);
+    startMeterLoop();
 
     window.addEventListener('beforeunload', () => {
       if (saveTimer) { clearTimeout(saveTimer); }
@@ -130,11 +153,12 @@
 
     renderAll();
     checkMissing();
+    publishState();
   }
 
   async function checkMissing() {
     const files = [];
-    cfg.tabs.forEach((t) => t.tiles.forEach((tile) => tile.file && files.push(tile.file)));
+    cfg.tabs.forEach((t) => t.tiles.forEach((tile) => files.push(...M.tileFiles(tile))));
     if (!files.length) return;
     const exists = await api.filesExist(files);
     missing.clear();
@@ -324,13 +348,22 @@
   function buildTile(tile, opts) {
     opts = opts || {};
     const look = M.resolveLook(cfg, tile);
-    const isMissing = !!tile.file && missing.has(tile.file);
+    const files = M.tileFiles(tile);
+    const isPlaylist = tile.kind === 'playlist';
+    const isMissing = files.length > 0 && files.every((f) => missing.has(f));
     const progress = h('div', { class: 'progress' });
     const line = h('div', { class: 'progress-line' });
     const count = h('span', { class: 'count' + (tile.playCount ? '' : ' zero'), title: 'So oft gespielt' }, tile.playCount + '×');
-    const time = h('span', { class: 'time' }, tile.duration ? fmtTime(tile.duration) : '');
+    const time = h('span', { class: 'time' }, fmtTotal(tile));
+    const track = h('span', { class: 'tile-track' });
     const flags = [];
+    if (isPlaylist) flags.push('☰ ' + tile.playlist.length + (tile.shuffle ? ' ⤮' : ''));
+    if (tile.role === 'bed') flags.push('▽');
     if (tile.loop) flags.push('⟲');
+    if (tile.endAt > 0 && !isPlaylist) flags.push('⇥');
+    const keyBadges = [];
+    if (tile.hotkey) keyBadges.push(h('span', { class: 'keybadge', title: 'Tastenkürzel' }, tile.hotkey));
+    if (tile.midi) keyBadges.push(h('span', { class: 'keybadge midi', title: 'MIDI: ' + midiLabel(tile.midi) }, '♫'));
     const playBtn = h('button', { class: 'play', title: 'Abspielen / Stoppen', tabindex: '-1' }, '▶');
 
     const el = h('div', {
@@ -342,15 +375,17 @@
     h('div', { class: 'tile-top' },
       count,
       h('span', { class: 'tag' }, look.styleName),
-      h('span', { class: 'flags' }, flags.join(' '))
+      h('span', { class: 'flags', title: flagTitle(tile) }, flags.join('  '))
     ),
     h('div', { class: 'tile-title', style: { fontSize: look.fontSize + 'px', fontWeight: look.bold ? '800' : '500' } },
       tile.title || '(ohne Titel)',
-      tile.subtitle ? h('span', { class: 'tile-sub' }, tile.subtitle) : null
+      tile.subtitle ? h('span', { class: 'tile-sub' }, tile.subtitle) : null,
+      track
     ),
     h('div', { class: 'tile-bottom' },
       playBtn,
-      isMissing ? h('span', { class: 'missing-note' }, 'Datei fehlt') : (!tile.file ? h('span', { class: 'missing-note' }, 'keine Datei') : null),
+      isMissing ? h('span', { class: 'missing-note' }, 'Datei fehlt') : (!M.tileHasAudio(tile) ? h('span', { class: 'missing-note' }, isPlaylist ? 'leere Playlist' : 'keine Datei') : null),
+      h('span', { class: 'keys' }, keyBadges),
       time
     ),
     line);
@@ -366,7 +401,7 @@
         e.dataTransfer.effectAllowed = 'move';
       });
     }
-    return { el, progress, line, time, count, play: playBtn, tile };
+    return { el, progress, line, time, count, track, play: playBtn, tile };
   }
 
   /** Tippen / Klicken / langes Drücken / Rechtsklick – einheitlich für Touch & Maus */
@@ -459,9 +494,31 @@
     triggerTile(tile, 'master');
   }
 
+  function playOptions(tile, bus) {
+    const o = {
+      bus,
+      fadeIn: fadeInOf(tile),
+      fadeOut: fadeOutOf(tile),
+      volume: tile.volume,
+      gainDb: tile.gainDb,
+      startAt: tile.startAt,
+      endAt: tile.endAt,
+      loop: tile.loop,
+      role: tile.role
+    };
+    if (tile.kind === 'playlist') {
+      o.tracks = tile.playlist.map((x) => ({ file: x.file, gainDb: x.gainDb, title: M.titleFromFileName(x.fileName || x.file) }));
+      o.shuffle = tile.shuffle;
+    }
+    return o;
+  }
+
   function triggerTile(tile, bus) {
     const s = cfg.settings;
-    if (!tile.file) { toast('Für „' + tile.title + '“ ist keine Audiodatei hinterlegt.', 'err'); return; }
+    if (!M.tileHasAudio(tile)) {
+      toast('Für „' + tile.title + '“ ist ' + (tile.kind === 'playlist' ? 'noch kein Titel in der Playlist.' : 'keine Audiodatei hinterlegt.'), 'err');
+      return;
+    }
     const running = A.voicesForTile(tile.id, bus).filter((v) => v.state !== 'fading');
 
     if (bus === 'cue') {
@@ -472,17 +529,15 @@
         if (s.retrigger === 'stop') { A.stopTile(tile.id, true, 'master'); return; }
         running.forEach((v) => A.stop(v.id, true, 120));
       }
-      if (s.playMode === 'exclusive') A.stopBus('master', true);
+      if (s.playMode === 'exclusive') {
+        // Jingles verdrängen Jingles, Hintergrundmusik verdrängt Hintergrundmusik.
+        // Hintergrundmusik bleibt unter einem Jingle stehen und wird nur abgesenkt (Ducking).
+        const isBed = tile.role === 'bed';
+        A.stopBus('master', true, null, (v) => (isBed ? v.role === 'bed' : v.role !== 'bed'));
+      }
     }
 
-    A.play(tile, {
-      bus,
-      fadeIn: fadeInOf(tile),
-      fadeOut: fadeOutOf(tile),
-      volume: tile.volume,
-      startAt: tile.startAt,
-      loop: tile.loop
-    });
+    A.play(tile, playOptions(tile, bus));
 
     if (bus === 'master') {
       tile.playCount++;
@@ -492,7 +547,14 @@
     }
   }
 
+  /** Wiedergabe gezielt starten (nicht umschalten) – für Fernsteuerung */
+  function startTile(tile) {
+    if (A.voicesForTile(tile.id, 'master').some((v) => v.state !== 'fading')) return;
+    triggerTile(tile, 'master');
+  }
+
   function onVoiceChange() {
+    publishState();
     updateTileStates();
     renderNowPlaying();
     // Punkte an den Reitern aktualisieren
@@ -515,18 +577,23 @@
       t.el.classList.toggle('fading', fading);
       t.el.classList.toggle('cueing', vs.some((v) => v.bus === 'cue'));
       t.play.textContent = playing || fading ? '■' : '▶';
+      const pl = master.find((v) => v.tracks);
+      t.track.textContent = pl && pl.trackTitle ? '♪ ' + pl.trackTitle : '';
       if (!master.length) {
         t.progress.style.width = '0';
         t.line.style.width = '0';
-        t.time.textContent = t.tile.duration ? fmtTime(t.tile.duration) : '';
+        t.time.textContent = fmtTotal(t.tile);
       }
     });
   }
 
   function voiceProgress(v) {
     const a = v.audio;
-    const dur = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
-    const cur = a.currentTime || 0;
+    const full = Number.isFinite(a.duration) && a.duration > 0 ? a.duration : 0;
+    const from = v.startAt || 0;
+    const to = v.endAt > 0 && full ? Math.min(v.endAt, full) : full;
+    const dur = Math.max(0, to - from);
+    const cur = Math.max(0, (a.currentTime || 0) - from);
     return { dur, cur, pct: dur ? Math.min(1, cur / dur) : 0, rem: dur ? Math.max(0, dur - cur) : 0 };
   }
 
@@ -568,8 +635,10 @@
         title: found ? 'Reiter: ' + found.tab.name : ''
       },
       v.bus === 'cue' ? h('span', { class: 'np-bus' }, '🎧 Vorhören') : null,
-      h('span', { class: 'np-title', onclick: () => found && selectTab(found.tab.id) }, v.title),
+      v.role === 'bed' ? h('span', { class: 'np-bus', title: 'Hintergrundmusik – wird bei Jingles abgesenkt' }, '▽ BG') : null,
+      h('span', { class: 'np-title', onclick: () => found && selectTab(found.tab.id) }, v.title, v.trackTitle ? h('small', null, v.trackTitle) : null),
       time,
+      v.tracks ? h('button', { title: 'Nächster Titel', onclick: () => A.next(v.tileId) }, '⏭') : null,
       h('button', {
         title: 'Ausblenden (nochmal = sofort aus)',
         onclick: () => A.stop(v.id, true)
@@ -616,10 +685,51 @@
       if (d < 0) toast('„' + t.fileName + '“ kann nicht gelesen werden (Format/Codec?).', 'err', 6000);
       t.duration = Math.max(0, d);
       const te = tileEls.get(t.id);
-      if (te && !A.voicesForTile(t.id, 'master').length) te.time.textContent = t.duration ? fmtTime(t.duration) : '';
+      if (te && !A.voicesForTile(t.id, 'master').length) te.time.textContent = fmtTotal(t);
       persist();
     });
+    if (cfg.settings.normalizeOnImport) tiles.forEach((t) => queueAnalysis(t, true));
     return tiles;
+  }
+
+  // ---------- Lautheitsanalyse (im Hintergrund, nacheinander)
+
+  const analysisQueue = [];
+  let analysisBusy = false;
+
+  /** entry = Kachel oder Playlist-Titel (mit file, gainDb, loudness, peak) */
+  function queueAnalysis(entry, applyGain) {
+    return new Promise((resolve) => {
+      analysisQueue.push({ entry, applyGain, resolve });
+      runAnalysisQueue();
+    });
+  }
+
+  async function runAnalysisQueue() {
+    if (analysisBusy) return;
+    analysisBusy = true;
+    while (analysisQueue.length) {
+      const job = analysisQueue.shift();
+      job.resolve(await analyzeEntry(job.entry, job.applyGain));
+    }
+    analysisBusy = false;
+  }
+
+  async function analyzeEntry(entry, applyGain) {
+    if (!entry.file || !api.readAudio) return null;
+    try {
+      const buffer = await A.decode(entry.file, api.readAudio);
+      const r = await A.analyzeLoudness(buffer);
+      entry.loudness = r.lufs;
+      entry.peak = r.peak;
+      if (!entry.duration) entry.duration = buffer.duration;
+      if (applyGain) entry.gainDb = M.normalizeGain(r.lufs, r.peak, cfg.settings.targetLufs);
+      persist();
+      return r;
+    } catch (e) {
+      console.warn('Analyse fehlgeschlagen', entry.file, e);
+      return null;
+    }
   }
 
   function moveTileToTab(tileId, targetTab, slot, silent) {
@@ -703,6 +813,7 @@
     const cueing = A.voicesForTile(tile.id, 'cue').length > 0;
     showMenu(x, y, tile.title, [
       { icon: playing ? '■' : '▶', label: playing ? 'Ausblenden' : 'Abspielen', fn: () => (playing ? A.stopTile(tile.id, true, 'master') : triggerTile(tile, 'master')) },
+      playing && tile.kind === 'playlist' ? { icon: '⏭', label: 'Nächster Titel', fn: () => A.next(tile.id) } : null,
       { icon: '🎧', label: cueing ? 'Vorhören stoppen' : 'Vorhören (Kopfhörer)', fn: () => triggerTile(tile, 'cue') },
       { icon: '✎', label: 'Bearbeiten …', fn: () => openTileEditor(tab, tile) },
       { icon: '⇄', label: 'Verschieben …', fn: () => startMove(tile) },
@@ -843,7 +954,7 @@
   function checkbox(label, checked, onChange) {
     const cb = h('input', { type: 'checkbox', checked: !!checked });
     cb.addEventListener('change', () => onChange(cb.checked));
-    return h('label', { class: 'check' }, cb, label);
+    return h('label', { class: 'check' }, cb, h('span', null, label));
   }
 
   // ---------- Reiter-Dialog
@@ -932,7 +1043,11 @@
   function openTileEditor(tab, tile) {
     const draft = JSON.parse(JSON.stringify(tile));
     const s = cfg.settings;
-    const d = openDialog({ title: 'Kachel bearbeiten', kind: 'tile', size: 'wide' });
+    const d = openDialog({
+      title: 'Kachel bearbeiten', kind: 'tile', size: 'wide',
+      onClose: () => { A.stopTile(draft.id, false, 'cue'); cancelLearn(); if (wave) wave.destroy(); }
+    });
+    let wave = null;
 
     const previewSlot = h('div', { class: 'slot' });
     const drawPreview = () => {
@@ -940,15 +1055,18 @@
       previewSlot.appendChild(buildTile(draft, { interactive: false }).el);
     };
 
-    const fileName = h('div', { class: 'fname' });
-    const drawFile = () => {
-      fileName.innerHTML = '';
-      append(fileName, [
-        draft.file ? (draft.fileName || draft.file.split(/[\\/]/).pop()) : 'Keine Datei gewählt',
-        h('small', null, draft.file ? (draft.duration ? 'Länge ' + fmtTime(draft.duration) + ' · ' : '') + draft.file : 'MP3, WAV, OGG, FLAC, M4A/AAC, OPUS …')
-      ]);
+    // ---------------- Seiten des Dialogs
+    const pages = {};
+    const pageNames = [['general', 'Allgemein'], ['audio', 'Audio'], ['playback', 'Wiedergabe'], ['control', 'Steuerung']];
+    const showPage = (name) => {
+      Object.keys(pages).forEach((k) => (pages[k].hidden = k !== name));
+      if (name === 'audio' && wave) wave.resize();
     };
+    pageNames.forEach(([k]) => (pages[k] = h('div', { class: 'page' })));
+    const nav = segmented(pageNames, 'general', showPage);
+    nav.classList.add('page-nav');
 
+    // ---------------- Allgemein
     const styleBox = h('div', { class: 'style-pick' });
     const drawStyles = () => {
       styleBox.innerHTML = '';
@@ -961,46 +1079,20 @@
         }, st.name));
       });
     };
-
     const look = M.resolveLook(cfg, Object.assign({}, draft, { bg: null, fg: null, fontSize: null }));
-
-    // Farb-Überschreibungen
     const bgPick = colorPicker(draft.bg || look.bg, (c) => { draft.bg = c; bgCb.querySelector('input').checked = true; drawPreview(); });
     const fgPick = colorPicker(draft.fg || look.fg, (c) => { draft.fg = c; fgCb.querySelector('input').checked = true; drawPreview(); });
     const bgCb = checkbox('Eigene Hintergrundfarbe', !!draft.bg, (on) => { draft.bg = on ? bgPick.querySelector('input[type=color]').value : null; drawPreview(); });
     const fgCb = checkbox('Eigene Schriftfarbe', !!draft.fg, (on) => { draft.fg = on ? fgPick.querySelector('input[type=color]').value : null; drawPreview(); });
-
     const curStyle = () => cfg.styles.find((x) => x.id === draft.styleId) || cfg.styles[0];
 
-    append(d.body, h('div', { class: 'grid2' },
+    append(pages.general, h('div', { class: 'grid2' },
       h('div', null,
         h('div', { class: 'preview-wrap' }, previewSlot),
         field('Titel', textInput(draft.title, (v) => { draft.title = v; drawPreview(); }, 'z. B. Satzbeginn')),
         field('Untertitel (optional)', textInput(draft.subtitle, (v) => { draft.subtitle = v; drawPreview(); }, 'z. B. Interpret, Hinweis')),
-        field('Audiodatei', h('div', { class: 'file-box' },
-          fileName,
-          h('button', {
-            class: 'small-btn', type: 'button',
-            onclick: async () => {
-              const p = await api.pickAudio(false);
-              if (!p || !p.length) return;
-              const [r] = await api.importFiles(p, s.copyToLibrary);
-              if (!r || !r.ok) { toast('Import fehlgeschlagen: ' + (r && r.error), 'err'); return; }
-              draft.file = r.path;
-              draft.fileName = fileNames.get(r.path) || r.name;
-              if (!draft.title || draft.title === 'Jingle' || draft.title === M.titleFromFileName(tile.fileName)) draft.title = M.titleFromFileName(draft.fileName);
-              const dur = await A.probeDuration(draft.file);
-              draft.duration = Math.max(0, dur);
-              missing.delete(draft.file);
-              drawFile(); drawPreview();
-            }
-          }, 'Datei wählen …'),
-          h('button', {
-            class: 'small-btn', type: 'button', title: 'Auf dem Vorhör-Ausgang abspielen',
-            onclick: () => { if (draft.file) triggerTile(draft, 'cue'); }
-          }, '🎧 Vorhören')
-        )),
-        field('Eigenschaft (Kachel-Stil)', styleBox, 'Stile legst du in den Einstellungen an (z. B. Satzbeginn = blau, Auszeiten = grün).'),
+        field('Eigenschaft (Kachel-Stil)', styleBox, 'Stile legst du in den Einstellungen an (z. B. Satzbeginn = blau, Auszeiten = grün).')),
+      h('div', null,
         h('div', { class: 'section' },
           h('h3', null, 'Aussehen anpassen'),
           bgCb, bgPick, h('div', { style: { height: '10px' } }), fgCb, fgPick, h('div', { style: { height: '10px' } }),
@@ -1008,57 +1100,234 @@
             value: draft.fontSize, defaultValue: curStyle().fontSize, min: 10, max: 96, step: 1, bigStep: 2,
             defaultLabel: 'Schriftgröße vom Stil', format: (v) => v + ' px',
             onChange: (v) => { draft.fontSize = v; drawPreview(); }
-          })))
-      ),
-      h('div', null,
+          }))),
         h('div', { class: 'section' },
-          h('h3', null, 'Wiedergabe'),
-          field('Fade-In', optionalStepper({
-            value: draft.fadeIn, defaultValue: s.defaultFadeIn, min: 0, max: 10000, step: 50, bigStep: 100,
-            defaultLabel: 'Standard (' + s.defaultFadeIn + ' ms)', format: (v) => v + ' ms',
-            onChange: (v) => (draft.fadeIn = v)
-          })),
-          field('Fade-Out beim Stoppen', optionalStepper({
-            value: draft.fadeOut, defaultValue: s.defaultFadeOut, min: 0, max: 10000, step: 50, bigStep: 250,
-            defaultLabel: 'Standard (' + s.defaultFadeOut + ' ms)', format: (v) => v + ' ms',
-            onChange: (v) => (draft.fadeOut = v)
-          })),
-          field('Lautstärke', stepper({ value: Math.round(draft.volume * 100), min: 0, max: 100, step: 1, bigStep: 5, format: (v) => v + ' %', onChange: (v) => (draft.volume = v / 100) })),
-          field('Start bei', stepper({ value: draft.startAt, min: 0, max: Math.max(60, Math.ceil(draft.duration || 0)), step: 0.5, format: (v) => v.toFixed(1) + ' s', onChange: (v) => (draft.startAt = v) }), 'Überspringt Stille am Anfang der Datei.'),
-          checkbox('Endlosschleife (Loop) – läuft, bis gestoppt wird', draft.loop, (v) => { draft.loop = v; drawPreview(); })
-        ),
-        h('div', { class: 'section' },
-          h('h3', null, 'Zähler'),
+          h('h3', null, 'Zähler & Ablage'),
           h('div', { class: 'row' },
-            stepper({ value: draft.playCount, min: 0, max: 9999, step: 1, noRange: true, format: (v) => v + '×', onChange: (v) => { draft.playCount = v; drawPreview(); } }))
-        ),
-        h('div', { class: 'section' },
-          h('h3', null, 'Ablage'),
+            stepper({ value: draft.playCount, min: 0, max: 9999, step: 1, noRange: true, format: (v) => v + '×', onChange: (v) => { draft.playCount = v; drawPreview(); } })),
           h('div', { class: 'row' },
-            h('select', {
-              class: 'inp', style: { maxWidth: '320px' },
-              onchange: (e) => (draft._targetTab = e.target.value)
-            }, cfg.tabs.map((t) => h('option', { value: t.id, selected: t.id === tab.id }, t.name === tab.name && t.id === tab.id ? t.name + ' (aktuell)' : t.name)))),
+            h('select', { class: 'inp', style: { maxWidth: '320px' }, onchange: (e) => (draft._targetTab = e.target.value) },
+              cfg.tabs.map((t) => h('option', { value: t.id, selected: t.id === tab.id }, t.id === tab.id ? t.name + ' (aktuell)' : t.name)))),
           h('p', { class: 'hint' }, 'Reiter wählen, um die Kachel beim Speichern dorthin zu verschieben.'),
           h('div', { class: 'row' },
             h('button', { class: 'small-btn', type: 'button', onclick: () => { d.close(); startMove(tile); } }, '⇄ Position im Raster ändern'),
-            h('button', { class: 'small-btn', type: 'button', onclick: () => { d.close(); duplicateTile(tab, tile); } }, '⧉ Duplizieren'))
-        )
-      )
+            h('button', { class: 'small-btn', type: 'button', onclick: () => { d.close(); duplicateTile(tab, tile); } }, '⧉ Duplizieren'))))
     ));
 
-    drawFile(); drawStyles(); drawPreview();
+    // ---------------- Audio
+    const singleBox = h('div');
+    const playlistBox = h('div');
+    const drawKind = () => {
+      singleBox.hidden = draft.kind !== 'single';
+      playlistBox.hidden = draft.kind !== 'playlist';
+      loopCb.querySelector('span').textContent = draft.kind === 'playlist' ? 'Playlist wiederholen (nach dem letzten Titel von vorn)' : 'Endlosschleife – läuft, bis gestoppt wird (zwischen Start- und Endpunkt)';
+      if (draft.kind === 'single' && wave) wave.resize();
+      drawPreview();
+    };
+
+    // Einzeldatei
+    const fileName = h('div', { class: 'fname' });
+    const loudInfo = h('div', { class: 'loud-info' });
+    let gainStep = null;
+    const drawFile = () => {
+      fileName.innerHTML = '';
+      append(fileName, [
+        draft.file ? (draft.fileName || draft.file.split(/[\\/]/).pop()) : 'Keine Datei gewählt',
+        h('small', null, draft.file ? (draft.duration ? 'Länge ' + fmtTime(draft.duration) + ' · ' : '') + draft.file : 'MP3, WAV, OGG, FLAC, M4A/AAC, OPUS …')
+      ]);
+      drawLoud();
+    };
+    const drawLoud = () => {
+      loudInfo.textContent = draft.loudness != null
+        ? 'Gemessen: ' + draft.loudness.toFixed(1) + ' LUFS · Spitze ' + (draft.peak ? A.linToDb(draft.peak).toFixed(1) : '–') + ' dBFS → mit Anpassung ≈ ' + (draft.loudness + draft.gainDb).toFixed(1) + ' LUFS (Ziel ' + s.targetLufs + ')'
+        : 'Noch nicht analysiert.';
+    };
+    const startStep = stepper({ value: draft.startAt, min: 0, max: Math.max(1, Math.ceil(draft.duration || 60)), step: 0.1, bigStep: 0.5, noRange: true, format: (v) => v.toFixed(1) + ' s', onChange: (v) => { draft.startAt = v; if (draft.endAt && draft.endAt <= v) draft.endAt = 0; wave && wave.draw(); drawPreview(); } });
+    const endStep = stepper({ value: draft.endAt, min: 0, max: Math.max(1, Math.ceil(draft.duration || 60)), step: 0.1, bigStep: 0.5, noRange: true, format: (v) => (v ? v.toFixed(1) + ' s' : 'Dateiende'), onChange: (v) => { draft.endAt = v > draft.startAt ? v : 0; wave && wave.draw(); drawPreview(); } });
+    const waveHost = h('div', { class: 'wave-host' });
+
+    const loadWave = () => {
+      if (wave) { wave.destroy(); wave = null; }
+      waveHost.innerHTML = '';
+      if (!draft.file) { waveHost.appendChild(h('div', { class: 'wave-empty' }, 'Keine Datei')); return; }
+      wave = createWaveform(waveHost, draft, {
+        onChange: () => { startStep._set(draft.startAt); endStep._set(draft.endAt); drawPreview(); },
+        onLoaded: (dur) => { if (!draft.duration) { draft.duration = dur; drawFile(); } }
+      });
+    };
+
+    const pickSingle = async () => {
+      const p = await api.pickAudio(false);
+      if (!p || !p.length) return;
+      const [r] = await api.importFiles(p, s.copyToLibrary);
+      if (!r || !r.ok) { toast('Import fehlgeschlagen: ' + (r && r.error), 'err'); return; }
+      draft.file = r.path;
+      draft.fileName = fileNames.get(r.path) || r.name;
+      if (!draft.title || draft.title === 'Jingle' || draft.title === M.titleFromFileName(tile.fileName)) draft.title = M.titleFromFileName(draft.fileName);
+      draft.duration = Math.max(0, await A.probeDuration(draft.file));
+      draft.startAt = 0; draft.endAt = 0; draft.loudness = null; draft.peak = null; draft.gainDb = 0;
+      startStep._set(0); endStep._set(0);
+      missing.delete(draft.file);
+      drawFile(); drawPreview(); loadWave();
+      if (s.normalizeOnImport) { await queueAnalysis(draft, true); gainStep._set(draft.gainDb); drawLoud(); }
+    };
+
+    gainStep = stepper({ value: draft.gainDb, min: -24, max: 24, step: 0.5, bigStep: 1, format: (v) => (v > 0 ? '+' : '') + v.toFixed(1) + ' dB', onChange: (v) => { draft.gainDb = v; drawLoud(); } });
+
+    append(singleBox, [
+      field('Audiodatei', h('div', { class: 'file-box' },
+        fileName,
+        h('button', { class: 'small-btn', type: 'button', onclick: pickSingle }, 'Datei wählen …'))),
+      field('Wellenform – Start- und Endpunkt', h('div', null,
+        waveHost,
+        h('div', { class: 'row wave-ctrl' },
+          h('button', { class: 'small-btn', type: 'button', title: 'Ab Startpunkt auf dem Vorhör-Ausgang abspielen', onclick: () => { if (draft.file) triggerTile(draft, 'cue'); } }, '🎧 Vorhören'),
+          h('span', { class: 'lbl-inline start' }, 'Start'), startStep,
+          h('span', { class: 'lbl-inline end' }, 'Ende'), endStep,
+          h('button', { class: 'small-btn', type: 'button', onclick: () => { draft.startAt = 0; draft.endAt = 0; startStep._set(0); endStep._set(0); wave && wave.draw(); drawPreview(); } }, 'Zurücksetzen'))),
+        'Grünen bzw. roten Marker ziehen (Finger oder Maus) oder ins Bild tippen. Ist ein Endpunkt gesetzt, blendet der Jingle dort automatisch mit seiner Fade-Out-Zeit aus.'),
+      h('div', { class: 'section' },
+        h('h3', null, 'Lautheit / Normalisierung'),
+        loudInfo,
+        field('Pegelanpassung', gainStep, 'Wird zusätzlich zur Lautstärke angewendet. Positive Werte machen leise Dateien lauter (Begrenzung auf −1 dBFS Spitze).'),
+        h('div', { class: 'row' },
+          h('button', {
+            class: 'small-btn', type: 'button',
+            onclick: async (e) => {
+              if (!draft.file) return;
+              e.target.disabled = true; e.target.textContent = 'Analysiere …';
+              const r = await queueAnalysis(draft, true);
+              e.target.disabled = false; e.target.textContent = '📊 Analysieren & auf Ziel normalisieren';
+              if (!r) toast('Analyse nicht möglich.', 'err');
+              gainStep._set(draft.gainDb); drawLoud();
+            }
+          }, '📊 Analysieren & auf Ziel normalisieren'),
+          h('button', { class: 'small-btn', type: 'button', onclick: () => { draft.gainDb = 0; gainStep._set(0); drawLoud(); } }, '0 dB')))
+    ]);
+
+    // Playlist
+    const trackList = h('div', { class: 'track-list' });
+    const drawTracks = () => {
+      trackList.innerHTML = '';
+      if (!draft.playlist.length) trackList.appendChild(h('p', { class: 'hint' }, 'Noch keine Titel – „Titel hinzufügen …“ oder Dateien aus dem Explorer hierher ziehen.'));
+      draft.playlist.forEach((tr, i) => {
+        trackList.appendChild(h('div', { class: 'track' },
+          h('span', { class: 'track-no' }, String(i + 1)),
+          h('span', { class: 'track-name' }, tr.fileName || tr.file.split(/[\\/]/).pop(),
+            h('small', null, (tr.duration ? fmtTime(tr.duration) : '') + (tr.loudness != null ? ' · ' + tr.loudness.toFixed(1) + ' LUFS' : '') + (tr.gainDb ? ' · ' + (tr.gainDb > 0 ? '+' : '') + tr.gainDb.toFixed(1) + ' dB' : '') + (missing.has(tr.file) ? ' · Datei fehlt' : ''))),
+          h('button', { class: 'small-btn', type: 'button', title: 'Nach oben', disabled: i === 0, onclick: () => { draft.playlist.splice(i - 1, 0, draft.playlist.splice(i, 1)[0]); drawTracks(); } }, '▲'),
+          h('button', { class: 'small-btn', type: 'button', title: 'Nach unten', disabled: i === draft.playlist.length - 1, onclick: () => { draft.playlist.splice(i + 1, 0, draft.playlist.splice(i, 1)[0]); drawTracks(); } }, '▼'),
+          h('button', { class: 'small-btn', type: 'button', title: 'Entfernen', onclick: () => { draft.playlist.splice(i, 1); drawTracks(); drawPreview(); } }, '✕')));
+      });
+      drawPreview();
+    };
+    const addTracks = async (paths) => {
+      const audio = paths.filter((p) => M.isAudioFile(p) || /^blob:/.test(p));
+      const res = await api.importFiles(audio, s.copyToLibrary);
+      const added = [];
+      res.filter((r) => r.ok).forEach((r) => {
+        const tr = M.normalizeTrack({ file: r.path, fileName: fileNames.get(r.path) || r.name });
+        draft.playlist.push(tr);
+        added.push(tr);
+      });
+      drawTracks();
+      for (const tr of added) {
+        tr.duration = Math.max(0, await A.probeDuration(tr.file));
+        drawTracks();
+      }
+      if (s.normalizeOnImport) for (const tr of added) { await queueAnalysis(tr, true); drawTracks(); }
+    };
+    playlistBox.addEventListener('dragover', (e) => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); e.stopPropagation(); } });
+    playlistBox.addEventListener('drop', (e) => {
+      if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+      e.preventDefault(); e.stopPropagation();
+      addTracks(Array.from(e.dataTransfer.files).map((f) => { const p = api.pathForFile(f); if (p) fileNames.set(p, f.name); return p; }).filter(Boolean));
+    });
+    append(playlistBox, [
+      trackList,
+      h('div', { class: 'row', style: { marginTop: '10px' } },
+        h('button', { class: 'small-btn', type: 'button', onclick: async () => { const p = await api.pickAudio(true); if (p && p.length) addTracks(p); } }, '+ Titel hinzufügen …'),
+        h('button', {
+          class: 'small-btn', type: 'button',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            for (const tr of draft.playlist) { await queueAnalysis(tr, true); drawTracks(); }
+            e.target.disabled = false;
+          }
+        }, '📊 Alle normalisieren'),
+        h('button', { class: 'small-btn', type: 'button', onclick: () => { if (draft.playlist.length) triggerTile(draft, 'cue'); } }, '🎧 Vorhören')),
+      checkbox('Zufällige Reihenfolge (Shuffle)', draft.shuffle, (v) => { draft.shuffle = v; drawPreview(); }),
+      h('p', { class: 'hint' }, 'Antippen startet die Playlist, nochmal antippen blendet aus. „Nächster Titel“ gibt es im Kontextmenü (lange drücken) und in der Fußzeile (⏭).')
+    ]);
+
+    append(pages.audio, [
+      field('Art der Kachel', segmented([['single', 'Einzel-Jingle'], ['playlist', 'Playlist (mehrere Titel)']], draft.kind, (v) => { draft.kind = v; drawKind(); })),
+      singleBox, playlistBox
+    ]);
+
+    // ---------------- Wiedergabe
+    const loopCb = checkbox('', draft.loop, (v) => { draft.loop = v; drawPreview(); });
+    append(pages.playback, h('div', { class: 'grid2' },
+      h('div', null,
+        field('Fade-In', optionalStepper({
+          value: draft.fadeIn, defaultValue: s.defaultFadeIn, min: 0, max: 10000, step: 50, bigStep: 100,
+          defaultLabel: 'Standard (' + s.defaultFadeIn + ' ms)', format: (v) => v + ' ms',
+          onChange: (v) => (draft.fadeIn = v)
+        })),
+        field('Fade-Out beim Stoppen', optionalStepper({
+          value: draft.fadeOut, defaultValue: s.defaultFadeOut, min: 0, max: 10000, step: 50, bigStep: 250,
+          defaultLabel: 'Standard (' + s.defaultFadeOut + ' ms)', format: (v) => v + ' ms',
+          onChange: (v) => (draft.fadeOut = v)
+        })),
+        field('Lautstärke', stepper({ value: Math.round(draft.volume * 100), min: 0, max: 100, step: 1, bigStep: 5, format: (v) => v + ' %', onChange: (v) => (draft.volume = v / 100) }))),
+      h('div', null,
+        field('Rolle', segmented([['normal', 'Jingle'], ['bed', 'Hintergrundmusik']], draft.role, (v) => { draft.role = v; drawPreview(); }),
+          'Hintergrundmusik läuft unter Jingles weiter und wird währenddessen automatisch abgesenkt (Ducking, siehe Einstellungen). Ein Jingle beendet sie nicht.'),
+        loopCb)
+    ));
+
+    // ---------------- Steuerung
+    const hkVal = h('span', { class: 'learn-val' });
+    const midiVal = h('span', { class: 'learn-val' });
+    const drawCtl = () => {
+      hkVal.textContent = draft.hotkey || '—';
+      midiVal.textContent = draft.midi ? midiLabel(draft.midi) : '—';
+      drawPreview();
+    };
+    const hkBtn = h('button', {
+      class: 'small-btn', type: 'button',
+      onclick: () => learnHotkey(hkBtn, (key) => { draft.hotkey = key; drawCtl(); }, draft.id)
+    }, '⌨ Taste zuweisen');
+    const midiBtn = h('button', {
+      class: 'small-btn', type: 'button',
+      onclick: () => learnMidi(midiBtn, (id) => { draft.midi = id; drawCtl(); }, draft.id)
+    }, '♫ MIDI zuweisen');
+    const apiUrl = 'http://localhost:' + s.httpPort + '/api/toggle/' + draft.id;
+    append(pages.control, [
+      field('Tastenkürzel', h('div', { class: 'row' }, hkVal, hkBtn, h('button', { class: 'small-btn', type: 'button', onclick: () => { draft.hotkey = ''; drawCtl(); } }, 'Entfernen')),
+        'Funktioniert im Live-Modus in allen Reitern. Stream Deck: Aktion „Hotkey“ mit derselben Taste belegen (z. B. F13–F24 oder Strg+Umschalt+Buchstabe).'),
+      field('MIDI-Controller', h('div', { class: 'row' }, midiVal, midiBtn, h('button', { class: 'small-btn', type: 'button', onclick: () => { draft.midi = ''; drawCtl(); } }, 'Entfernen')),
+        'Taste/Pad (Note), Regler oder Taster (CC ≥ 64) oder Programmwechsel am Gerät betätigen.'),
+      field('HTTP-Fernsteuerung (Stream Deck, Companion)', h('div', { class: 'row' },
+        h('code', { class: 'api-url' }, apiUrl),
+        h('button', { class: 'small-btn', type: 'button', onclick: () => copyText(apiUrl) }, 'Kopieren')),
+        s.httpEnabled ? 'Aufruf startet bzw. blendet die Kachel aus. Weitere Befehle: /api/play/…, /api/stop/…, /api/next/…' : 'Die HTTP-Schnittstelle ist ausgeschaltet – Einstellungen → Fernsteuerung.')
+    ]);
+
+    append(d.body, [nav, pages.general, pages.audio, pages.playback, pages.control]);
+    drawStyles(); drawFile(); drawTracks(); drawCtl(); drawKind(); showPage('general');
+    loadWave();
 
     append(d.foot, [
       h('button', { class: 'btn danger', onclick: async () => { if (await deleteTile(tab, tile)) d.close(); } }, 'Löschen'),
       h('div', { class: 'spacer' }),
-      h('button', { class: 'btn', onclick: () => { A.stopTile(draft.id, true, 'cue'); d.close(); } }, 'Abbrechen'),
+      h('button', { class: 'btn', onclick: () => d.close() }, 'Abbrechen'),
       h('button', {
         class: 'btn primary',
         onclick: () => {
-          A.stopTile(draft.id, true, 'cue');
           const target = draft._targetTab;
           delete draft._targetTab;
+          releaseHotkeyConflicts(draft);
           Object.assign(tile, M.normalizeTile(draft));
           if (target && target !== tab.id) {
             const tt = cfg.tabs.find((t) => t.id === target);
@@ -1070,11 +1339,194 @@
     ]);
   }
 
+  /** Doppelte Tastenkürzel/MIDI-Zuweisungen bei anderen Kacheln entfernen */
+  function releaseHotkeyConflicts(t) {
+    cfg.tabs.forEach((tab) => tab.tiles.forEach((o) => {
+      if (o.id === t.id) return;
+      if (t.hotkey && o.hotkey === t.hotkey) { o.hotkey = ''; toast('Tastenkürzel ' + t.hotkey + ' wurde von „' + o.title + '“ übernommen.', '', 4000); }
+      if (t.midi && o.midi === t.midi) { o.midi = ''; toast('MIDI-Zuweisung wurde von „' + o.title + '“ übernommen.', '', 4000); }
+    }));
+    if (t.midi && (t.midi === cfg.settings.midiStop || t.midi === cfg.settings.midiFade)) {
+      toast('Achtung: Diese MIDI-Zuweisung ist auch für Stopp/Ausblenden belegt.', 'err', 5000);
+    }
+  }
+
+  function copyText(text) {
+    try { navigator.clipboard.writeText(text); toast('Kopiert.', 'ok', 1500); } catch (e) { toast(text, '', 6000); }
+  }
+
+  // ---------- Wellenform mit Start-/Endmarkern
+
+  const peakCache = new Map();
+
+  function createWaveform(host, draft, cb) {
+    const canvas = h('canvas', { class: 'wave' });
+    const status = h('div', { class: 'wave-status' }, 'Wellenform wird geladen …');
+    host.appendChild(canvas);
+    host.appendChild(status);
+    let peaks = null, duration = draft.duration || 0, raf = null, dead = false, drag = null;
+    const H = 150;
+
+    const xFor = (t, w) => (duration ? (t / duration) * w : 0);
+    const tFor = (x, w) => Math.max(0, Math.min(duration, (x / w) * duration));
+
+    function resize() {
+      const w = Math.max(200, host.clientWidth || 600);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas.style.width = w + 'px';
+      canvas.style.height = H + 'px';
+      draw();
+    }
+
+    function draw() {
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.width / dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, H);
+      ctx.fillStyle = '#0b0d12';
+      ctx.fillRect(0, 0, w, H);
+      const mid = (H - 22) / 2;
+      if (peaks) {
+        const n = peaks.length;
+        ctx.fillStyle = '#5b8def';
+        for (let i = 0; i < w; i++) {
+          const p = peaks[Math.min(n - 1, Math.floor((i / w) * n))];
+          const y1 = mid - p[1] * mid * 0.95, y2 = mid - p[0] * mid * 0.95;
+          ctx.fillRect(i, y1, 1, Math.max(1, y2 - y1));
+        }
+      }
+      if (duration) {
+        const xs = xFor(draft.startAt || 0, w);
+        const xe = draft.endAt > 0 ? xFor(Math.min(draft.endAt, duration), w) : w;
+        ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        ctx.fillRect(0, 0, xs, H - 22);
+        ctx.fillRect(xe, 0, w - xe, H - 22);
+        // Fade-Out-Bereich vor dem Endpunkt andeuten
+        if (draft.endAt > 0) {
+          const fo = (draft.fadeOut == null ? cfg.settings.defaultFadeOut : draft.fadeOut) / 1000;
+          const xf = Math.max(xs, xFor(Math.max(0, draft.endAt - fo), w));
+          const g = ctx.createLinearGradient(xf, 0, xe, 0);
+          g.addColorStop(0, 'rgba(229,56,59,0)');
+          g.addColorStop(1, 'rgba(229,56,59,0.35)');
+          ctx.fillStyle = g;
+          ctx.fillRect(xf, 0, xe - xf, H - 22);
+        }
+        marker(ctx, xs, '#2fbf71', 'Start ' + (draft.startAt || 0).toFixed(1) + ' s', 'left');
+        marker(ctx, xe, '#e5383b', draft.endAt > 0 ? 'Ende ' + draft.endAt.toFixed(1) + ' s' : 'Ende', 'right');
+        // Abspielposition beim Vorhören
+        const v = A.voicesForTile(draft.id, 'cue')[0];
+        if (v && v.audio.currentTime) {
+          const xp = xFor(v.audio.currentTime, w);
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(xp - 1, 0, 2, H - 22);
+        }
+        // Zeitachse
+        ctx.fillStyle = '#8b94a8';
+        ctx.font = '11px Segoe UI, sans-serif';
+        ctx.textAlign = 'center';
+        const stepSec = duration > 120 ? 30 : duration > 40 ? 10 : duration > 12 ? 2 : duration > 4 ? 1 : 0.5;
+        for (let t = 0; t <= duration + 0.001; t += stepSec) {
+          const x = xFor(t, w);
+          ctx.fillRect(x, H - 22, 1, 4);
+          if (x > 14 && x < w - 14) ctx.fillText(stepSec < 1 ? t.toFixed(1) : fmtTime(t), x, H - 6);
+        }
+      }
+    }
+
+    function marker(ctx, x, color, label, side) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 1.5, 0, 3, H - 22);
+      ctx.beginPath();
+      ctx.arc(x, H - 34, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = 'bold 12px Segoe UI, sans-serif';
+      ctx.textAlign = side === 'left' ? 'left' : 'right';
+      ctx.fillText(label, x + (side === 'left' ? 6 : -6), 14);
+    }
+
+    function pick(e) {
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, w = r.width;
+      const xs = xFor(draft.startAt || 0, w);
+      const xe = draft.endAt > 0 ? xFor(draft.endAt, w) : w;
+      const ds = Math.abs(x - xs), de = Math.abs(x - xe);
+      return { x, w, which: ds <= de ? 'start' : 'end', near: Math.min(ds, de) < 28 };
+    }
+
+    function setFrom(which, x, w) {
+      let t = Math.round(tFor(x, w) * 10) / 10;
+      if (which === 'start') {
+        const max = (draft.endAt > 0 ? draft.endAt : duration) - 0.2;
+        draft.startAt = Math.max(0, Math.min(t, max));
+      } else {
+        t = Math.max(t, (draft.startAt || 0) + 0.2);
+        draft.endAt = t >= duration - 0.05 ? 0 : t;
+      }
+      draw();
+      cb.onChange && cb.onChange();
+    }
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!duration) return;
+      const p = pick(e);
+      drag = p.which;
+      canvas.setPointerCapture(e.pointerId);
+      setFrom(drag, p.x, p.w);
+      e.preventDefault();
+    });
+    canvas.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const r = canvas.getBoundingClientRect();
+      setFrom(drag, e.clientX - r.left, r.width);
+    });
+    const end = () => { drag = null; };
+    canvas.addEventListener('pointerup', end);
+    canvas.addEventListener('pointercancel', end);
+
+    function loop() {
+      if (dead) return;
+      if (A.voicesForTile(draft.id, 'cue').length) draw();
+      raf = requestAnimationFrame(loop);
+    }
+
+    (async () => {
+      try {
+        if (!api.readAudio) throw new Error('Wellenform nur in der Desktop-App');
+        let entry = peakCache.get(draft.file);
+        if (!entry) {
+          const buffer = await A.decode(draft.file, api.readAudio);
+          entry = { peaks: A.peaks(buffer, 1200), duration: buffer.duration };
+          peakCache.set(draft.file, entry);
+          if (peakCache.size > 30) peakCache.delete(peakCache.keys().next().value);
+        }
+        if (dead) return;
+        peaks = entry.peaks;
+        duration = entry.duration;
+        status.remove();
+        cb.onLoaded && cb.onLoaded(duration);
+        resize();
+      } catch (err) {
+        status.textContent = 'Wellenform nicht verfügbar: ' + (err.message || err);
+        resize();
+      }
+    })();
+    resize();
+    loop();
+
+    return {
+      draw, resize,
+      destroy: () => { dead = true; cancelAnimationFrame(raf); }
+    };
+  }
+
   // ---------- Einstellungen
 
-  function openSettings() {
+  function openSettings(opts) {
     const s = cfg.settings;
-    const d = openDialog({ title: 'Einstellungen', kind: 'settings', size: 'wide', onClose: () => renderAll() });
+    const d = openDialog({ title: 'Einstellungen', kind: 'settings', size: 'wide', onClose: () => { cancelLearn(); renderAll(); } });
 
     // --- Audio-Ausgabe
     const masterSel = h('select', { class: 'inp' });
@@ -1144,6 +1596,67 @@
 
     const libInfo = h('p', { class: 'hint' }, 'Datenordner: ' + (info.dataDir || '–') + (info.portable ? ' (portabel)' : ''));
 
+    // --- Lautheit: alle Kacheln analysieren
+    const normAllInfo = h('p', { class: 'hint' });
+    const normAllBtn = h('button', {
+      class: 'small-btn',
+      onclick: async () => {
+        const entries = [];
+        cfg.tabs.forEach((t) => t.tiles.forEach((x) => {
+          if (x.kind === 'playlist') x.playlist.forEach((tr) => entries.push(tr));
+          else if (x.file) entries.push(x);
+        }));
+        if (!entries.length) { toast('Keine Audiodateien vorhanden.', 'err'); return; }
+        normAllBtn.disabled = true;
+        let n = 0, failed = 0;
+        for (const e of entries) {
+          normAllInfo.textContent = 'Analysiere ' + (++n) + ' von ' + entries.length + ' …';
+          if (!(await queueAnalysis(e, true))) failed++;
+        }
+        normAllBtn.disabled = false;
+        normAllInfo.textContent = entries.length - failed + ' Datei(en) auf ' + s.targetLufs + ' LUFS angeglichen' + (failed ? ', ' + failed + ' nicht lesbar' : '') + '.';
+        renderGrid();
+      }
+    }, '📊 Alle Kacheln analysieren & normalisieren');
+
+    // --- MIDI
+    const midiStatus = h('p', { class: 'hint' });
+    const midiStopVal = h('span', { class: 'learn-val' });
+    const midiFadeVal = h('span', { class: 'learn-val' });
+    const drawMidiGlobal = () => {
+      midiStopVal.textContent = s.midiStop ? midiLabel(s.midiStop) : '—';
+      midiFadeVal.textContent = s.midiFade ? midiLabel(s.midiFade) : '—';
+    };
+    const drawMidiStatus = () => {
+      const ins = midiInputs();
+      midiStatus.textContent = !navigator.requestMIDIAccess || !midiAccess ? 'MIDI ist auf diesem System nicht verfügbar.'
+        : ins.length ? 'Verbunden: ' + ins.join(', ') : 'Kein MIDI-Gerät angeschlossen.';
+    };
+    d.dlg._refreshMidi = drawMidiStatus;
+    drawMidiGlobal(); drawMidiStatus();
+
+    // --- HTTP
+    const httpStatus = h('div', { class: 'hint' });
+    const drawHttp = () => {
+      httpStatus.innerHTML = '';
+      if (!s.httpEnabled) { httpStatus.textContent = 'Aus.'; return; }
+      if (!remoteInfo.running) { httpStatus.textContent = 'Nicht gestartet (Port belegt?).'; return; }
+      append(httpStatus, ['Läuft – Fernbedienung im Browser: ', remoteInfo.urls.map((u, i) => [i ? ' · ' : '',
+        h('a', { href: '#', style: { color: 'var(--accent)' }, onclick: (e) => { e.preventDefault(); api.openUrl(u); } }, u)])]);
+    };
+    let remoteTimer = null;
+    const applyRemote = () => { clearTimeout(remoteTimer); remoteTimer = setTimeout(async () => { await applyRemoteSettings(true); drawHttp(); }, 400); };
+    drawHttp();
+
+    // --- Übersicht der Zuweisungen
+    const keyTable = h('div', { class: 'key-table' });
+    const rows = [];
+    cfg.tabs.forEach((t) => t.tiles.forEach((x) => { if (x.hotkey || x.midi) rows.push([x.hotkey || '–', x.midi ? midiLabel(x.midi) : '–', x.title, t.name]); }));
+    if (!rows.length) keyTable.appendChild(h('p', { class: 'hint' }, 'Noch keine Tasten oder MIDI-Signale zugewiesen.'));
+    else keyTable.appendChild(h('table', null,
+      h('tr', null, h('th', null, 'Taste'), h('th', null, 'MIDI'), h('th', null, 'Kachel'), h('th', null, 'Reiter')),
+      rows.map((r) => h('tr', null, r.map((c) => h('td', null, c))))));
+
     append(d.body, [
       h('div', { class: 'section' },
         h('h3', null, 'Audio-Ausgabe'),
@@ -1171,6 +1684,25 @@
             field('Langes Drücken (Kontextmenü)', stepper({ value: s.longPressMs, min: 250, max: 2000, step: 50, format: (v) => v + ' ms', onChange: (v) => { s.longPressMs = v; persist(); } }))))),
 
       h('div', { class: 'section' },
+        h('h3', null, 'Hintergrundmusik & Ducking'),
+        h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Kacheln mit der Rolle „Hintergrundmusik“ (z. B. Playlists für Satzpausen) laufen unter Jingles weiter und werden währenddessen automatisch leiser. Endet der Jingle, kommt die Musik sanft zurück.'),
+        h('div', { class: 'grid2' },
+          field('Pegel während eines Jingles', stepper({ value: Math.round(s.duckLevel * 100), min: 0, max: 100, step: 5, format: (v) => v + ' %' + (v > 0 ? ' (' + A.linToDb(v / 100).toFixed(0) + ' dB)' : ' (stumm)'), onChange: (v) => { s.duckLevel = v / 100; A.setDucking(s.duckLevel, s.duckFadeMs); persist(); } })),
+          field('Absenk- und Rückkehrzeit', stepper({ value: s.duckFadeMs, min: 0, max: 3000, step: 50, bigStep: 100, format: (v) => v + ' ms', onChange: (v) => { s.duckFadeMs = v; A.setDucking(s.duckLevel, s.duckFadeMs); persist(); } })))),
+
+      h('div', { class: 'section' },
+        h('h3', null, 'Lautheit & Pegelanzeige'),
+        h('div', { class: 'grid2' },
+          h('div', null,
+            checkbox('Neue Dateien automatisch analysieren und normalisieren', s.normalizeOnImport, (v) => { s.normalizeOnImport = v; persist(); }),
+            field('Ziel-Lautheit', stepper({ value: s.targetLufs, min: -30, max: -6, step: 1, format: (v) => v + ' LUFS', onChange: (v) => { s.targetLufs = v; persist(); } }),
+              '−16 LUFS ist ein guter Wert für Hallen-PA; −14 lauter, −20 leiser. Alle Jingles werden auf diese Lautheit angeglichen, damit keiner aus der Reihe fällt.')),
+          h('div', null,
+            normAllBtn,
+            normAllInfo,
+            checkbox('Pegelanzeige (VU-Meter) in der Fußzeile', s.showMeter, (v) => { s.showMeter = v; persist(); })))),
+
+      h('div', { class: 'section' },
         h('h3', null, 'Kachel-Stile (Eigenschaften)'),
         h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Vorlagen für Farben und Schrift – z. B. Satzbeginn blau, Auszeiten grün, Ironie Gegner gelb. Jede Kachel bekommt einen Stil und kann ihn einzeln überschreiben.'),
         styleList,
@@ -1187,6 +1719,25 @@
             checkbox('Zähler-Reset bestätigen lassen', s.confirmReset, (v) => { s.confirmReset = v; persist(); })))),
 
       h('div', { class: 'section' },
+        h('h3', null, 'Fernsteuerung'),
+        h('div', { class: 'grid2' },
+          h('div', null,
+            h('h4', null, 'MIDI-Controller'),
+            checkbox('MIDI-Steuerung aktiv', s.midiEnabled, (v) => { s.midiEnabled = v; persist(); }),
+            midiStatus,
+            field('„Sofort stoppen“', h('div', { class: 'row' }, midiStopVal, h('button', { class: 'small-btn', onclick: (e) => learnMidi(e.currentTarget, (id) => { s.midiStop = id; persist(); drawMidiGlobal(); }) }, '♫ Zuweisen'), h('button', { class: 'small-btn', onclick: () => { s.midiStop = ''; persist(); drawMidiGlobal(); } }, 'Entfernen'))),
+            field('„Alles ausblenden“', h('div', { class: 'row' }, midiFadeVal, h('button', { class: 'small-btn', onclick: (e) => learnMidi(e.currentTarget, (id) => { s.midiFade = id; persist(); drawMidiGlobal(); }) }, '♫ Zuweisen'), h('button', { class: 'small-btn', onclick: () => { s.midiFade = ''; persist(); drawMidiGlobal(); } }, 'Entfernen'))),
+            h('p', { class: 'hint' }, 'Kacheln weist du im Kachel-Dialog unter „Steuerung“ eine Taste oder ein MIDI-Signal zu. Funktioniert mit allen USB-MIDI-Geräten (Pad-Controller, Keyboards, Akai APC/MPD, Novation Launchpad …).')),
+          h('div', null,
+            h('h4', null, 'HTTP-Schnittstelle (Stream Deck, Companion, Tablet)'),
+            checkbox('HTTP-Fernsteuerung aktiv', s.httpEnabled, (v) => { s.httpEnabled = v; persist(); applyRemote(); }),
+            field('Port', stepper({ value: s.httpPort, min: 1024, max: 65535, step: 1, noRange: true, onChange: (v) => { s.httpPort = v; persist(); applyRemote(); } })),
+            checkbox('Auch im Netzwerk erreichbar (Tablet/Handy als Fernbedienung)', s.httpLan, (v) => { s.httpLan = v; persist(); applyRemote(); }),
+            httpStatus,
+            h('p', { class: 'hint' }, 'Stream Deck: einfachste Lösung ist die Aktion „Hotkey“ mit dem Tastenkürzel der Kachel. Alternativ mit einem Web-Request-Plugin bzw. Bitfocus Companion die Adresse /api/toggle/<Kachel-ID> aufrufen (ID im Kachel-Dialog unter „Steuerung“). Netzwerkzugriff nur in vertrauenswürdigen Netzen einschalten.'))),
+        field('Belegte Tasten & MIDI-Signale', keyTable)),
+
+      h('div', { class: 'section' },
         h('h3', null, 'Daten & Sicherung'),
         checkbox('Audiodateien beim Hinzufügen in die EventDJ-Bibliothek kopieren (empfohlen)', s.copyToLibrary, (v) => { s.copyToLibrary = v; persist(); }),
         libInfo,
@@ -1201,10 +1752,26 @@
         h('h3', null, 'Bedienung & Info'),
         h('p', { class: 'hint' },
           'Tastatur: ', h('span', { class: 'kbd' }, 'Esc'), ' alles ausblenden · ', h('span', { class: 'kbd' }, 'Umschalt+Esc'), ' sofort stoppen · ',
-          h('span', { class: 'kbd' }, 'Strg+1…9'), ' Reiter wechseln · ', h('span', { class: 'kbd' }, 'Strg+E'), ' Bearbeiten · ', h('span', { class: 'kbd' }, 'F11'), ' Vollbild'),
+          h('span', { class: 'kbd' }, 'Strg+1…9'), ' Reiter wechseln · ', h('span', { class: 'kbd' }, 'Strg+E'), ' Bearbeiten · ', h('span', { class: 'kbd' }, 'F11'), ' Vollbild · eigene Tastenkürzel pro Kachel (Kachel-Dialog → Steuerung)'),
         h('p', { class: 'hint' }, 'EventDJ ' + (info.version || '') + (info.electron ? ' · Electron ' + info.electron : '') + ' · ',
           h('a', { href: '#', style: { color: 'var(--accent)' }, onclick: (e) => { e.preventDefault(); api.openUrl('https://github.com/stadtkindd/EventDJsw'); } }, 'github.com/stadtkindd/EventDJsw')))
     ]);
+
+    // Seiten-Navigation der Einstellungen
+    const PAGE_OF = {
+      'Audio-Ausgabe': 'audio', 'Lautheit & Pegelanzeige': 'audio',
+      'Wiedergabe': 'play', 'Hintergrundmusik & Ducking': 'play',
+      'Kachel-Stile (Eigenschaften)': 'look', 'Darstellung': 'look',
+      'Fernsteuerung': 'remote',
+      'Daten & Sicherung': 'data', 'Bedienung & Info': 'data'
+    };
+    const sections = Array.from(d.body.querySelectorAll(':scope > .section'));
+    const showSettingsPage = (pg) => sections.forEach((sec) => { sec.hidden = PAGE_OF[sec.querySelector('h3').textContent] !== pg; });
+    const navEl = segmented([['audio', 'Audio'], ['play', 'Wiedergabe'], ['look', 'Aussehen'], ['remote', 'Fernsteuerung'], ['data', 'Daten & Info']], 'audio', showSettingsPage);
+    navEl.classList.add('page-nav');
+    d.body.insertBefore(navEl, d.body.firstChild);
+    showSettingsPage(opts && opts.page || 'audio');
+    if (opts && opts.page) navEl.querySelectorAll('button').forEach((b, i) => b.classList.toggle('sel', ['audio', 'play', 'look', 'remote', 'data'][i] === opts.page));
 
     append(d.foot, [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: () => d.close() }, 'Fertig')]);
   }
@@ -1237,9 +1804,250 @@
   async function cleanupLibrary() {
     if (!(await confirmDialog('Bibliothek aufräumen?', 'Audiodateien in der EventDJ-Bibliothek, die keiner Kachel mehr zugeordnet sind, werden gelöscht.', 'Aufräumen', true))) return;
     const used = [];
-    cfg.tabs.forEach((t) => t.tiles.forEach((x) => x.file && used.push(x.file)));
+    cfg.tabs.forEach((t) => t.tiles.forEach((x) => used.push(...M.tileFiles(x))));
     const r = await api.cleanupLibrary(used);
     toast(r.removed + ' ungenutzte Datei(en) entfernt.', 'ok');
+  }
+
+  // ================================================================ Fernsteuerung: Tastatur, MIDI, HTTP
+
+  const RESERVED_KEYS = ['Escape', 'Shift+Escape', 'F11', 'F12', 'Ctrl+E', 'Ctrl+R'].concat([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => 'Ctrl+' + n));
+
+  /** Tastenkombination als Text, z. B. "F1", "Q", "Num5", "Ctrl+Shift+A" */
+  function hotkeyFromEvent(e) {
+    if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'Dead', 'Unidentified'].includes(e.key)) return '';
+    let key;
+    if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+    else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
+    else if (/^Numpad/.test(e.code)) key = 'Num' + e.code.slice(6);
+    else if (e.code === 'Space') key = 'Space';
+    else if (/^F\d{1,2}$/.test(e.key)) key = e.key;
+    else key = e.key.length === 1 ? e.key.toUpperCase() : e.key;
+    const mods = [];
+    if (e.ctrlKey) mods.push('Ctrl');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey) mods.push('Shift');
+    return mods.concat(key).join('+');
+  }
+
+  function findTileByHotkey(key) {
+    for (const tab of cfg.tabs) for (const t of tab.tiles) if (t.hotkey && t.hotkey.toLowerCase() === String(key).toLowerCase()) return t;
+    return null;
+  }
+
+  let learnState = null;
+  function cancelLearn() {
+    if (!learnState) return;
+    const st = learnState;
+    learnState = null;
+    if (st.keyHandler) document.removeEventListener('keydown', st.keyHandler, true);
+    st.btn.classList.remove('learning');
+    st.btn.textContent = st.label;
+  }
+
+  function learnHotkey(btn, done) {
+    cancelLearn();
+    const label = btn.textContent;
+    btn.classList.add('learning');
+    btn.textContent = 'Taste drücken … (Esc = abbrechen)';
+    const keyHandler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape') { cancelLearn(); return; }
+      const key = hotkeyFromEvent(e);
+      if (!key) return;
+      if (RESERVED_KEYS.includes(key)) { toast(key + ' ist für EventDJ reserviert – bitte eine andere Taste wählen.', 'err'); return; }
+      cancelLearn();
+      done(key);
+    };
+    learnState = { btn, label, keyHandler };
+    document.addEventListener('keydown', keyHandler, true);
+  }
+
+  // ---------- MIDI
+
+  let midiAccess = null;
+  const ccState = new Map();
+
+  function midiLabel(id) {
+    const m = /^(note|cc|pc):(\d+):(\d+)$/.exec(id || '');
+    if (!m) return id || '';
+    const names = { note: 'Note', cc: 'CC', pc: 'Programm' };
+    let extra = '';
+    if (m[1] === 'note') {
+      const n = Number(m[3]);
+      extra = ' (' + ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'H'][n % 12] + (Math.floor(n / 12) - 1) + ')';
+    }
+    return names[m[1]] + ' ' + m[3] + extra + ' · Kanal ' + m[2];
+  }
+
+  async function initMidi() {
+    if (!navigator.requestMIDIAccess) return;
+    try {
+      midiAccess = await navigator.requestMIDIAccess({ sysex: false });
+    } catch (e) {
+      midiAccess = null;
+      return;
+    }
+    const hook = () => midiAccess.inputs.forEach((inp) => { inp.onmidimessage = onMidiMessage; });
+    hook();
+    midiAccess.onstatechange = (e) => {
+      hook();
+      if (e.port && e.port.type === 'input') {
+        if (e.port.state === 'connected' && e.port.connection !== 'open') toast('MIDI-Gerät verbunden: ' + e.port.name, 'ok', 2500);
+        if (e.port.state === 'disconnected') toast('MIDI-Gerät getrennt: ' + e.port.name, 'err', 4000);
+      }
+      const dlg = document.querySelector('.dialog[data-kind=settings]');
+      if (dlg && dlg._refreshMidi) dlg._refreshMidi();
+    };
+  }
+
+  function midiInputs() {
+    const out = [];
+    if (midiAccess) midiAccess.inputs.forEach((i) => out.push(i.name || 'MIDI-Gerät'));
+    return out;
+  }
+
+  function onMidiMessage(e) {
+    const [status, d1, d2] = e.data;
+    const type = status & 0xf0, ch = (status & 0x0f) + 1;
+    let id = null;
+    if (type === 0x90 && d2 > 0) id = 'note:' + ch + ':' + d1;
+    else if (type === 0xb0) {
+      const key = 'cc:' + ch + ':' + d1;
+      const prev = ccState.get(key) || 0;
+      ccState.set(key, d2);
+      if (d2 >= 64 && prev < 64) id = key; // nur bei steigender Flanke auslösen
+    } else if (type === 0xc0) id = 'pc:' + ch + ':' + d1;
+    if (!id) return;
+    if (learnState && learnState.midiDone) {
+      const done = learnState.midiDone;
+      cancelLearn();
+      done(id);
+      return;
+    }
+    if (!cfg.settings.midiEnabled || topDialog()) return;
+    if (id === cfg.settings.midiStop) { A.stopAll(false); return; }
+    if (id === cfg.settings.midiFade) { A.stopAll(true); return; }
+    for (const tab of cfg.tabs) for (const t of tab.tiles) if (t.midi === id) { triggerTile(t, 'master'); return; }
+  }
+
+  function learnMidi(btn, done) {
+    if (!midiAccess) { toast('MIDI ist nicht verfügbar – ist ein MIDI-Gerät angeschlossen?', 'err'); return; }
+    if (!midiInputs().length) { toast('Kein MIDI-Eingang gefunden. Gerät anschließen und erneut versuchen.', 'err'); return; }
+    cancelLearn();
+    const label = btn.textContent;
+    btn.classList.add('learning');
+    btn.textContent = 'Taste/Regler am MIDI-Gerät betätigen … (Esc = abbrechen)';
+    const keyHandler = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelLearn(); } };
+    document.addEventListener('keydown', keyHandler, true);
+    learnState = { btn, label, keyHandler, midiDone: done };
+  }
+
+  // ---------- HTTP (Stream Deck, Companion, Tablet-Fernbedienung)
+
+  let remoteInfo = { running: false, urls: [] };
+
+  async function applyRemoteSettings(silent) {
+    if (!api.remoteConfigure) return remoteInfo;
+    const s = cfg.settings;
+    const r = await api.remoteConfigure({ enabled: s.httpEnabled, port: s.httpPort, lan: s.httpLan });
+    remoteInfo = r || remoteInfo;
+    if (r && r.ok === false) toast('Fernsteuerung: ' + r.error, 'err', 6000);
+    else if (!silent && r && r.running) toast('Fernsteuerung aktiv: ' + r.urls[0], 'ok');
+    publishState();
+    return remoteInfo;
+  }
+
+  let stateTimer = null;
+  function publishState() {
+    if (!api.remoteState || !cfg) return;
+    clearTimeout(stateTimer);
+    stateTimer = setTimeout(() => {
+      const playing = [];
+      A.voices.forEach((v) => { if (v.bus === 'master' && !playing.includes(v.tileId)) playing.push(v.tileId); });
+      api.remoteState({
+        activeTab: cfg.tabs.findIndex((t) => t.id === cfg.activeTabId) + 1,
+        tabs: cfg.tabs.map((t) => ({
+          id: t.id, name: t.name, color: t.color,
+          tiles: t.tiles.slice().sort((a, b) => a.slot - b.slot).map((x) => {
+            const look = M.resolveLook(cfg, x);
+            return { id: x.id, title: x.title, bg: look.bg, fg: look.fg, hotkey: x.hotkey, playCount: x.playCount, kind: x.kind };
+          })
+        })),
+        playing
+      });
+    }, 80);
+  }
+
+  function onRemoteCommand(c) {
+    const found = c.id ? findTile(c.id) : null;
+    switch (c.cmd) {
+      case 'toggle': if (found) triggerTile(found.tile, 'master'); break;
+      case 'play': if (found) startTile(found.tile); break;
+      case 'stop': if (found) A.stopTile(found.tile.id, true, 'master'); break;
+      case 'next': if (found) A.next(found.tile.id); break;
+      case 'key': { const t = findTileByHotkey(c.key); if (t) triggerTile(t, 'master'); break; }
+      case 'fade': A.stopAll(true); break;
+      case 'stopall': A.stopAll(false); break;
+      case 'tab': if (cfg.tabs[c.index]) selectTab(cfg.tabs[c.index].id); break;
+      case 'reset': M.resetCounters(cfg); persist(); renderGrid(); toast('Zähler per Fernsteuerung zurückgesetzt.', 'ok'); break;
+    }
+  }
+
+  // ================================================================ Pegelanzeige
+
+  function startMeterLoop() {
+    const canvas = $('#meter');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const W = 200, H = 44;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const MIN = -48, MAX = 3;
+    const xOf = (lin) => { const db = A.linToDb(lin); return Math.max(0, Math.min(1, (db - MIN) / (MAX - MIN))) * W; };
+    const smooth = [0, 0];
+    let idleFrames = 0;
+    function frame() {
+      requestAnimationFrame(frame);
+      const wrap = $('#meter-wrap');
+      if (!cfg.settings.showMeter) { wrap.hidden = true; return; }
+      wrap.hidden = false;
+      const active = A.voices.size > 0;
+      if (!active && idleFrames > 90) return;
+      idleFrames = active ? 0 : idleFrames + 1;
+      const m = A.readMeter('master');
+      const vals = [m.l, m.r], holds = [m.holdL, m.holdR];
+      ctx.clearRect(0, 0, W, H);
+      const barH = 15;
+      [0, 1].forEach((i) => {
+        smooth[i] = Math.max(vals[i], smooth[i] * 0.86);
+        const y = 4 + i * (barH + 4);
+        ctx.fillStyle = '#232938';
+        ctx.fillRect(0, y, W, barH);
+        const x = xOf(smooth[i]);
+        const xY = xOf(A.dbToLin(-12)), xR = xOf(A.dbToLin(-3));
+        ctx.fillStyle = '#2fbf71'; ctx.fillRect(0, y, Math.min(x, xY), barH);
+        if (x > xY) { ctx.fillStyle = '#f2c818'; ctx.fillRect(xY, y, Math.min(x, xR) - xY, barH); }
+        if (x > xR) { ctx.fillStyle = '#e5383b'; ctx.fillRect(xR, y, x - xR, barH); }
+        const xh = xOf(holds[i]);
+        if (xh > 1) { ctx.fillStyle = holds[i] >= 1 ? '#ff4d4f' : '#ffffff'; ctx.fillRect(xh - 1, y, 2, barH); }
+      });
+      // Skala
+      ctx.fillStyle = '#8b94a8';
+      ctx.font = '9px Segoe UI, sans-serif';
+      ctx.textAlign = 'center';
+      [-36, -24, -12, -6, 0].forEach((db) => {
+        const x = ((db - MIN) / (MAX - MIN)) * W;
+        ctx.fillRect(x, 4 + 2 * barH + 4, 1, 3);
+        ctx.fillText(String(db), Math.min(W - 6, Math.max(6, x)), H - 1);
+      });
+      const clip = m.holdL >= 1 || m.holdR >= 1;
+      $('#meter-clip').classList.toggle('on', clip);
+    }
+    requestAnimationFrame(frame);
   }
 
   // ================================================================ Bedienleisten & Eingaben
@@ -1247,7 +2055,7 @@
   function bindTopbar() {
     $('#btn-edit').addEventListener('click', () => { editMode = !editMode; moveTileId = null; renderAll(); });
     $('#btn-reset').addEventListener('click', () => resetCounters(null));
-    $('#btn-settings').addEventListener('click', openSettings);
+    $('#btn-settings').addEventListener('click', () => openSettings());
     $('#btn-fullscreen').addEventListener('click', () => api.fullscreen());
     $('#edit-banner-cancel').addEventListener('click', () => { moveTileId = null; renderAll(); });
   }
@@ -1275,7 +2083,7 @@
     stage.addEventListener('dragleave', (e) => { if (!isFiles(e)) return; depth = Math.max(0, depth - 1); if (!depth) hint.hidden = true; });
     stage.addEventListener('dragover', (e) => { if (isFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; } });
     stage.addEventListener('drop', async (e) => {
-      if (!isFiles(e)) return;
+      if (!isFiles(e) || topDialog()) return;
       e.preventDefault();
       depth = 0; hint.hidden = true;
       document.querySelectorAll('.drag-over').forEach((x) => x.classList.remove('drag-over'));
@@ -1328,6 +2136,10 @@
       } else if (e.ctrlKey && e.key.toLowerCase() === 'e') {
         editMode = !editMode; moveTileId = null; renderAll();
         e.preventDefault();
+      } else if (!editMode && !e.repeat) {
+        // Tastenkürzel der Kacheln (gelten in allen Reitern)
+        const tile = findTileByHotkey(hotkeyFromEvent(e));
+        if (tile) { e.preventDefault(); triggerTile(tile, 'master'); }
       }
     });
     // Kein Kontextmenü des Browsers
@@ -1365,6 +2177,7 @@
       openDataDir: async () => {},
       openUrl: async (u) => window.open(u, '_blank'),
       pathForFile: blobFor,
+      readAudio: (p) => fetch(p).then((r) => r.arrayBuffer()),
       onSetOpenRequest: () => {}
     };
   }

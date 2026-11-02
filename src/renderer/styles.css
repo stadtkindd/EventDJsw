@@ -142,7 +142,8 @@ body.moving .slot { outline: 2px dashed #3b7be0; outline-offset: -2px; cursor: c
   display: flex; align-items: center; gap: 10px; padding: 8px 10px; min-height: 74px;
   background: var(--panel); border-top: 1px solid var(--line);
 }
-#nowplaying { flex: 1; display: flex; gap: 8px; overflow-x: auto; min-width: 0; align-items: center; }
+#nowplaying { flex: 1; display: flex; gap: 8px; overflow-x: auto; min-width: 0; align-items: center; scrollbar-width: none; }
+#nowplaying::-webkit-scrollbar { display: none; }
 #nowplaying .idle { color: var(--muted); font-size: 15px; padding-left: 6px; }
 .np {
   flex: none; display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border-radius: 12px;
@@ -272,3 +273,47 @@ input[type=color] { width: 54px; height: 44px; border: 1px solid var(--line); bo
   input[type=range]#master-vol { width: 110px; }
   .bbtn { min-width: 80px; padding: 0 10px; }
 }
+
+/* ------------------------------------------------------------ 1.1: Seiten, Wellenform, Playlist, Steuerung, Pegel */
+.page-nav { margin-bottom: 18px; flex-wrap: wrap; }
+.page[hidden], .section[hidden] { display: none; }
+.dialog-body h4 { margin: 0 0 8px; font-size: 15px; }
+
+.tile-track { display: block; font-size: 13px; font-weight: 600; opacity: .9; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-track:empty { display: none; }
+.keys { display: flex; gap: 4px; margin-left: auto; margin-right: 8px; }
+.keybadge { font-size: 12px; font-weight: 800; padding: 2px 7px; border-radius: 6px; background: rgba(0,0,0,.32); font-family: Consolas, "Segoe UI", monospace; }
+.keybadge.midi { font-family: inherit; }
+
+.wave-host { position: relative; width: 100%; min-height: 150px; border-radius: 12px; overflow: hidden; background: #0b0d12; }
+.wave { display: block; touch-action: none; cursor: ew-resize; }
+.wave-status, .wave-empty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 14px; pointer-events: none; }
+.wave-ctrl { margin-top: 10px; }
+.wave-ctrl .stepper .val { min-width: 96px; }
+.lbl-inline { font-size: 13px; font-weight: 700; padding: 4px 8px; border-radius: 6px; }
+.lbl-inline.start { background: rgba(47,191,113,.2); color: #6fe0a3; }
+.lbl-inline.end { background: rgba(229,56,59,.2); color: #ff8a8c; }
+.loud-info { font-size: 14px; padding: 10px 12px; border-radius: 10px; background: #0f1219; border: 1px solid var(--line); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
+
+.track-list { display: flex; flex-direction: column; gap: 6px; max-height: 340px; overflow: auto; padding-right: 4px; }
+.track { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: #0f1219; border: 1px solid var(--line); }
+.track-no { width: 28px; text-align: center; color: var(--muted); font-weight: 700; }
+.track-name { flex: 1; min-width: 0; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track-name small { display: block; color: var(--muted); font-size: 12px; }
+.track .small-btn { min-width: 40px; }
+
+.learn-val { min-width: 150px; padding: 10px 12px; border-radius: 10px; background: #0f1219; border: 1px solid var(--line); font-weight: 700; font-family: Consolas, "Segoe UI", monospace; }
+.small-btn.learning { background: var(--accent); border-color: var(--accent); color: #fff; animation: pulse 1s infinite; }
+.api-url { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; background: #0f1219; border: 1px solid var(--line); font-size: 13px; word-break: break-all; user-select: text; }
+.key-table table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.key-table th, .key-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.key-table th { color: var(--muted); font-weight: 600; }
+
+.np-title small { display: block; font-weight: 500; font-size: 12px; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#meter-wrap { position: relative; display: flex; align-items: center; gap: 6px; }
+#meter-wrap[hidden] { display: none; }
+#meter { display: block; }
+#meter-clip { font-size: 10px; font-weight: 800; padding: 2px 5px; border-radius: 4px; background: #3a1d1e; color: #6a3a3b; }
+#meter-clip.on { background: var(--danger); color: #fff; }
+@media (max-width: 1250px) { #meter-wrap { display: none; } }
