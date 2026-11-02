@@ -68,7 +68,7 @@ npm run dist       # Windows-Installer + Portable-EXE nach dist/ (auf Windows au
 
 Aufbau, Datenformat und Audio-Engine: **[docs/ENTWICKLUNG.md](docs/ENTWICKLUNG.md)**
 
-Neues Release: Version in `package.json` erhöhen, dann entweder einen Tag `v*` pushen (`npm version patch && git push --follow-tags`) oder auf GitHub unter *Releases → Draft a new release* ein Release veröffentlichen – der Workflow baut die EXE-Dateien und hängt sie automatisch an.
+Neues Release: Version in `package.json` erhöhen (z. B. `npm version patch --no-git-tag-version`) und auf `main` pushen – der Workflow baut die EXE-Dateien und legt automatisch das Release `v<version>` mit beiden Dateien an.
 
 ## Lizenz
 
