@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' file: blob: data:; connect-src 'self' file: blob:">
+  <title>EventDJ</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div id="brand" title="EventDJ">
+        <span class="brand-mark">E</span><span class="brand-text">EventDJ</span>
+      </div>
+      <nav id="tabs" aria-label="Reiter"></nav>
+      <div id="top-actions">
+        <button id="btn-reset" class="tbtn" title="Alle Zähler zurücksetzen (Neustart Event/Spiel)">
+          <span class="ico">↺</span><span class="lbl">Neues Spiel</span>
+        </button>
+        <button id="btn-edit" class="tbtn" title="Bearbeiten ein/aus (Strg+E)">
+          <span class="ico">✎</span><span class="lbl">Bearbeiten</span>
+        </button>
+        <button id="btn-settings" class="tbtn icon-only" title="Einstellungen"><span class="ico">⚙</span></button>
+        <button id="btn-fullscreen" class="tbtn icon-only" title="Vollbild (F11)"><span class="ico">⛶</span></button>
+      </div>
+    </header>
+
+    <div id="edit-banner" hidden>
+      <span id="edit-banner-text">Bearbeitungsmodus – Kachel antippen zum Bearbeiten, leeres Feld zum Hinzufügen, Audiodateien hierher ziehen.</span>
+      <button id="edit-banner-cancel" class="small-btn" hidden>Abbrechen</button>
+    </div>
+
+    <main id="stage">
+      <div id="grid" aria-label="Jingle-Kacheln"></div>
+      <div id="drop-hint" hidden><div>Audiodateien loslassen zum Hinzufügen</div></div>
+    </main>
+
+    <footer id="bottombar">
+      <div id="nowplaying" aria-live="polite"></div>
+      <div id="output-info" title="Ausgabegeräte – in den Einstellungen änderbar"></div>
+      <div id="master">
+        <span class="master-lbl">Master</span>
+        <input id="master-vol" type="range" min="0" max="100" step="1" aria-label="Master-Lautstärke">
+        <span id="master-val">100%</span>
+      </div>
+      <button id="btn-fadeall" class="bbtn" title="Alles ausblenden (Esc)">Ausblenden</button>
+      <button id="btn-stopall" class="bbtn danger" title="Sofort alles stoppen (Umschalt+Esc)">STOP</button>
+    </footer>
+  </div>
+
+  <div id="overlay-root"></div>
+  <div id="toasts"></div>
+
+  <script src="../shared/model.js"></script>
+  <script src="audio.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
