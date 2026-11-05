@@ -33,10 +33,13 @@
       <button id="edit-banner-cancel" class="small-btn" hidden>Abbrechen</button>
     </div>
 
+    <div id="middle">
     <main id="stage">
       <div id="grid" aria-label="Jingle-Kacheln"></div>
       <div id="drop-hint" hidden><div>Audiodateien loslassen zum Hinzufügen</div></div>
     </main>
+    <aside id="player" aria-label="Pausenmusik-Player" hidden></aside>
+    </div>
 
     <section id="fxbar" aria-label="Live-Effekte" hidden></section>
 
@@ -52,6 +55,7 @@
         <input id="master-vol" type="range" min="0" max="100" step="1" aria-label="Master-Lautstärke">
         <span id="master-val">100%</span>
       </div>
+      <button id="btn-player" class="bbtn icon" title="Pausenmusik-Player ein-/ausblenden">♫</button>
       <button id="btn-fx" class="bbtn icon" title="Live-Effekte ein-/ausblenden">FX</button>
       <button id="btn-pause" class="bbtn icon" title="Pause / Weiter">❚❚</button>
       <button id="btn-fadeall" class="bbtn" title="Alles ausblenden">Ausblenden</button>

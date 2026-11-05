@@ -86,7 +86,8 @@
     return buf;
   }
 
-  function createFxChain(ctx) {
+  function createFxChain(ctx, withLimiter) {
+    if (withLimiter === undefined) withLimiter = true;
     const input = ctx.createGain();
     const bass = ctx.createBiquadFilter();
     bass.type = 'lowshelf'; bass.frequency.value = 110; bass.gain.value = 0;
@@ -115,13 +116,42 @@
     delay.connect(fbTone); fbTone.connect(fb); fb.connect(delay);
     delay.connect(sum);
 
-    // Schutz vor Übersteuerung (Bass-Anhebung, Hall, Echo)
-    const limiter = ctx.createDynamicsCompressor();
-    limiter.threshold.value = -1.5; limiter.knee.value = 0; limiter.ratio.value = 20;
-    limiter.attack.value = 0.002; limiter.release.value = 0.15;
-    sum.connect(limiter);
+    let output = sum;
+    if (withLimiter) {
+      // Schutz vor Übersteuerung (Bass-Anhebung, Hall, Echo)
+      const limiter = ctx.createDynamicsCompressor();
+      limiter.threshold.value = -1.5; limiter.knee.value = 0; limiter.ratio.value = 20;
+      limiter.attack.value = 0.002; limiter.release.value = 0.15;
+      sum.connect(limiter);
+      output = limiter;
+    }
+    return { ctx, input, output, bass, treble, lp, hp, hallWet, echoWet, delay, fb };
+  }
 
-    return { input, output: limiter, bass, treble, lp, hp, hallWet, echoWet, delay, fb };
+  /** Effektwerte f = { bass, treble, filter, hall, echo } auf eine Kette anwenden */
+  function applyFxParams(fx, f, echoMs, immediate) {
+    const ctx = fx.ctx, t = ctx.currentTime;
+    const set = (param, val) => {
+      if (immediate) param.value = val;
+      else { param.cancelScheduledValues(t); param.setTargetAtTime(val, t, 0.03); }
+    };
+    const g = (k) => Number(f[k]) || 0;
+    set(fx.bass.gain, g('bass'));
+    set(fx.treble.gain, g('treble'));
+    const nyq = ctx.sampleRate / 2;
+    const x = g('filter') / 100;
+    set(fx.lp.frequency, x < 0 ? 20000 * Math.pow(250 / 20000, -x) : nyq);
+    set(fx.hp.frequency, x > 0 ? 20 * Math.pow(2500 / 20, x) : 10);
+    // Hall/Echo: Anteil gebogen, damit der Regler unten feinfühlig ist
+    set(fx.hallWet.gain, Math.pow(g('hall') / 100, 2) * 1.6);
+    set(fx.echoWet.gain, Math.pow(g('echo') / 100, 1.5) * 0.85);
+    set(fx.fb.gain, 0.3 + 0.3 * (g('echo') / 100));
+    set(fx.delay.delayTime, (echoMs || 375) / 1000);
+  }
+
+  /** hat eine Kachel klangverändernde Effekte (ohne Tempo)? */
+  function hasSoundFx(f) {
+    return !!f && ['bass', 'treble', 'filter', 'hall', 'echo'].some((k) => Math.abs(Number(f[k]) || 0) > 1e-6);
   }
 
   /** Neutralwerte und Wertebereiche der Effekte */
@@ -240,26 +270,28 @@
 
     _applyFxNodes(immediate) {
       const b = this.buses.master;
-      if (!b || !b.fx) return;
-      const fx = b.fx, f = this.fx, ctx = b.ctx, t = ctx.currentTime;
-      const set = (param, val) => {
-        if (immediate) param.value = val;
-        else { param.cancelScheduledValues(t); param.setTargetAtTime(val, t, 0.03); }
-      };
-      set(fx.bass.gain, f.bass);
-      set(fx.treble.gain, f.treble);
-      const nyq = ctx.sampleRate / 2;
-      const x = f.filter / 100;
-      set(fx.lp.frequency, x < 0 ? 20000 * Math.pow(250 / 20000, -x) : nyq);
-      set(fx.hp.frequency, x > 0 ? 20 * Math.pow(2500 / 20, x) : 10);
-      // Hall/Echo: Anteil quadratisch, damit der Regler unten feinfühlig ist
-      set(fx.hallWet.gain, Math.pow(f.hall / 100, 2) * 1.6);
-      set(fx.echoWet.gain, Math.pow(f.echo / 100, 1.5) * 0.85);
-      set(fx.fb.gain, 0.3 + 0.3 * (f.echo / 100));
-      set(fx.delay.delayTime, (this.echoMs || 375) / 1000);
+      if (b && b.fx) applyFxParams(b.fx, this.fx, this.echoMs, immediate);
+      this.voices.forEach((v) => { if (v.fxChain) applyFxParams(v.fxChain, v.tileFx, this.echoMs, immediate); });
     },
 
-    _rateFor(v) { return v.bus === 'master' ? this.fx.tempo : 1; },
+    /** Effekte einer laufenden Voice ändern (z. B. nach „Auf Kachel speichern“) */
+    setVoiceFx(v, fx) {
+      v.tileFx = Object.assign({}, fx || {});
+      v.tileRate = Number(v.tileFx.tempo) || 1;
+      if (hasSoundFx(v.tileFx) && !v.fxChain) {
+        v.fxChain = createFxChain(v.ctx, false);
+        try { v.source.disconnect(); } catch (e) { /* ignorieren */ }
+        v.source.connect(v.fxChain.input);
+        v.fxChain.output.connect(v.gain);
+      }
+      if (v.fxChain) applyFxParams(v.fxChain, v.tileFx, this.echoMs, false);
+      this._applyTempo(v);
+    },
+
+    _rateFor(v) {
+      const r = (v.tileRate || 1) * (v.bus === 'master' ? this.fx.tempo : 1);
+      return Math.min(16, Math.max(0.0625, r));
+    },
 
     _applyTempo(v) {
       const r = this._rateFor(v);
@@ -286,30 +318,41 @@
       return this.paused;
     },
 
+    pauseVoice(v) {
+      if (!v || v.paused || (v.state !== 'playing' && v.state !== 'fading')) return;
+      v.paused = true;
+      v.pausedAt = performance.now();
+      try { v.audio.pause(); } catch (e) { /* ignorieren */ }
+    },
+
+    resumeVoice(v) {
+      if (!v || !v.paused) return;
+      const shift = performance.now() - v.pausedAt;
+      v.startedAt += shift;
+      if (v.fadeOutStart != null) v.fadeOutStart += shift;
+      v.paused = false;
+      v.audio.play().catch((err) => emit('error', { voice: v, error: String((err && err.message) || err) }));
+      this.ensureTimer();
+    },
+
+    /** eine Voice anhalten/fortsetzen (z. B. Pausenmusik-Player) */
+    toggleVoicePause(v) {
+      if (!v) return false;
+      if (v.paused) this.resumeVoice(v); else this.pauseVoice(v);
+      this.paused = this._anyPaused();
+      emit('change', { type: v.paused ? 'pause' : 'resume', voice: v });
+      return v.paused;
+    },
+
     pauseAll() {
-      const now = performance.now();
-      this.voices.forEach((v) => {
-        if (v.paused || (v.state !== 'playing' && v.state !== 'fading')) return;
-        v.paused = true;
-        v.pausedAt = now;
-        try { v.audio.pause(); } catch (e) { /* ignorieren */ }
-      });
+      this.voices.forEach((v) => this.pauseVoice(v));
       this.paused = this._anyPaused();
       emit('change', { type: 'pause' });
     },
 
     resumeAll() {
-      const now = performance.now();
-      this.voices.forEach((v) => {
-        if (!v.paused) return;
-        const shift = now - v.pausedAt;
-        v.startedAt += shift;
-        if (v.fadeOutStart != null) v.fadeOutStart += shift;
-        v.paused = false;
-        v.audio.play().catch((err) => emit('error', { voice: v, error: String((err && err.message) || err) }));
-      });
+      this.voices.forEach((v) => this.resumeVoice(v));
       this.paused = false;
-      this.ensureTimer();
       emit('change', { type: 'resume' });
     },
 
@@ -395,8 +438,12 @@
       if (tracks) {
         order = tracks.map((_, i) => i);
         if (opts.shuffle) shuffle(order);
+        // gewünschter Starttitel (Player): im Zufallsmodus an den Anfang holen
+        const si = Math.min(tracks.length - 1, Math.max(0, opts.startIndex || 0));
+        if (opts.shuffle && opts.startIndex != null) { order.splice(order.indexOf(si), 1); order.unshift(si); opts.startPos = 0; }
+        else opts.startPos = opts.startIndex != null ? si : 0;
       }
-      const firstFile = tracks ? tracks[order[0]].file : tile.file;
+      const firstFile = tracks ? tracks[order[opts.startPos || 0]].file : tile.file;
       const audio = tracks ? this.takeAudio('__pl', firstFile) : this.takeAudio(tile.id, firstFile);
       let source;
       try {
@@ -413,7 +460,16 @@
     async _start(tile, opts, bus, busName, audio, source, tracks, order) {
       const gain = bus.ctx.createGain();
       gain.gain.value = 0;
-      source.connect(gain);
+      // Effekte der Kachel (eigene Kette nur, wenn nötig)
+      let fxChain = null;
+      if (hasSoundFx(opts.fx)) {
+        fxChain = createFxChain(bus.ctx, false);
+        applyFxParams(fxChain, opts.fx, this.echoMs, true);
+        source.connect(fxChain.input);
+        fxChain.output.connect(gain);
+      } else {
+        source.connect(gain);
+      }
       gain.connect(bus.input);
 
       const voice = {
@@ -431,7 +487,12 @@
         endAt: tracks ? 0 : Math.max(0, opts.endAt || 0),
         loop: !!opts.loop,
         role: opts.role === 'bed' && busName === 'master' ? 'bed' : 'normal',
-        tracks, order, trackPos: 0,
+        duck: opts.duck !== false,
+        shuffled: !!opts.shuffle,
+        fxChain,
+        tileFx: Object.assign({}, opts.fx || {}),
+        tileRate: (opts.fx && Number(opts.fx.tempo)) || 1,
+        tracks, order, trackPos: tracks ? Math.max(0, opts.startPos || 0) : 0,
         duckFactor: 1,
         startedAt: performance.now(),
         fadeOutStart: null,
@@ -464,6 +525,8 @@
       try {
         await audio.play();
       } catch (err) {
+        // „Abgebrochen“ heißt nur: neuer Titel geladen (Weiter/Sprung) oder Pause während des Ladens – kein Fehler
+        if (err && err.name === 'AbortError') return voice;
         if (voice.state !== 'done') {
           emit('error', { voice, error: String((err && err.message) || err) });
           this.finish(voice, 'error');
@@ -500,11 +563,12 @@
 
     /** Playlist: nächster Titel (manual = per Knopf, mit kurzem Einblenden) */
     _advance(v, manual) {
+      if (v.paused) { v.paused = false; this.paused = this._anyPaused(); }
       v.trackPos++;
       if (v.trackPos >= v.order.length) {
         if (!v.loop) { this.finish(v, 'ended'); return; }
         v.trackPos = 0;
-        if (v.order.length > 2) {
+        if (v.shuffled && v.order.length > 2) {   // nur im Zufallsmodus neu mischen
           const last = v.order[v.order.length - 1];
           shuffle(v.order);
           if (v.order[0] === last) v.order.push(v.order.shift());
@@ -520,6 +584,55 @@
 
     next(tileId) {
       this.voices.forEach((v) => { if (v.tileId === tileId && v.tracks && v.state !== 'fading') this._advance(v, true); });
+    },
+
+    /** Playlist-Index (in tracks) des aktuellen Titels, −1 = unbekannt */
+    currentTrackIndex(v) {
+      return v && v.tracks && v.trackPos >= 0 ? v.order[v.trackPos] : -1;
+    },
+
+    /** zu einem bestimmten Titel springen */
+    jumpTo(v, index) {
+      if (!v || !v.tracks || !v.tracks[index]) return;
+      if (v.paused) { v.paused = false; this.paused = this._anyPaused(); }
+      v.trackPos = v.order.indexOf(index) - 1;
+      const loop = v.loop; v.loop = true;   // Sprung darf nicht am Listenende enden
+      this._advance(v, true);
+      v.loop = loop;
+    },
+
+    /** zurück: nach >3 s an den Titelanfang, sonst vorheriger Titel */
+    prev(v) {
+      if (!v || !v.tracks) return;
+      if ((v.audio.currentTime || 0) > 3) { v.audio.currentTime = 0; return; }
+      const pos = v.trackPos > 0 ? v.trackPos - 1 : (v.loop ? v.order.length - 1 : 0);
+      this.jumpTo(v, v.order[pos]);
+    },
+
+    seek(v, sec) {
+      if (!v) return;
+      try { v.audio.currentTime = Math.max(0, sec); } catch (e) { /* ignorieren */ }
+    },
+
+    setVoiceVolume(v, vol) { if (v) v.volume = Math.min(1, Math.max(0, vol)); },
+    setVoiceLoop(v, on) { if (v) v.loop = !!on; },
+    setVoiceDuck(v, on) { if (v) v.duck = !!on; },
+
+    /**
+     * Titelliste einer laufenden Playlist ersetzen (Player-Liste bearbeitet).
+     * curIndex = Index des laufenden Titels in der neuen Liste (−1 = nicht mehr enthalten)
+     */
+    setTracks(v, tracks, curIndex, shuffled) {
+      if (!v || !v.tracks) return;
+      v.tracks = tracks;
+      v.shuffled = !!shuffled;
+      v.order = tracks.map((_, i) => i);
+      if (shuffled) {
+        shuffle(v.order);
+        if (curIndex >= 0) { v.order.splice(v.order.indexOf(curIndex), 1); v.order.unshift(curIndex); }
+      }
+      v.trackPos = curIndex >= 0 ? v.order.indexOf(curIndex) : -1;
+      emit('change', { type: 'track', voice: v });
     },
 
     isBedDucked() {
@@ -544,7 +657,7 @@
         }
         // Ducking weich nachführen
         if (v.role === 'bed') {
-          const target = duckOn ? this.duck.level : 1;
+          const target = duckOn && v.duck ? this.duck.level : 1;
           const step = this.duck.fadeMs > 0 ? dt / this.duck.fadeMs : 1;
           if (v.duckFactor < target) v.duckFactor = Math.min(target, v.duckFactor + step);
           else if (v.duckFactor > target) v.duckFactor = Math.max(target, v.duckFactor - step);
@@ -601,6 +714,7 @@
       v.audio.onended = null;
       v.audio.onerror = null;
       try { v.gain.disconnect(); v.source.disconnect(); } catch (e) { /* ignorieren */ }
+      if (v.fxChain) { try { v.fxChain.output.disconnect(); } catch (e) { /* ignorieren */ } }
       v.audio.removeAttribute('src');
       try { v.audio.load(); } catch (e) { /* ignorieren */ }
       this.voices.delete(v.id);

@@ -20,6 +20,9 @@
  *   GET /api/tempo/<faktor>   Tempo der laufenden Titel (z. B. 1, 2, 5, 10, 0.5)
  *   GET /api/fx/<name>/<wert> Live-Effekt: bass, treble (dB), filter (−100…100), hall, echo (0…100), tempo
  *   GET /api/fxreset          alle Effekte zurücksetzen
+ *   GET /api/music            Pausenmusik: Start / Pause
+ *   GET /api/musicnext        Pausenmusik: nächster Titel
+ *   GET /api/musicfade        Pausenmusik ausblenden
  */
 const http = require('http');
 const os = require('os');
@@ -72,7 +75,7 @@ main{display:grid;gap:8px;padding:10px;grid-template-columns:repeat(auto-fill,mi
 .t.p{box-shadow:0 0 0 4px #fff}
 .t small{position:absolute;left:8px;top:6px;font-size:12px;opacity:.75}
 </style></head><body>
-<header><button onclick="api('pause')">⏸ Pause</button><button onclick="api('fade')">Ausblenden</button><button class="stop" onclick="api('stopall')">STOP</button><button onclick="api('tempo/1')">1×</button><button onclick="api('tempo/2')">2×</button><button onclick="api('tempo/5')">5×</button><button onclick="api('tempo/10')">10×</button><button onclick="api('fxreset')">FX aus</button></header>
+<header><button onclick="api('pause')">⏸ Pause</button><button onclick="api('fade')">Ausblenden</button><button class="stop" onclick="api('stopall')">STOP</button><button onclick="api('tempo/1')">1×</button><button onclick="api('tempo/2')">2×</button><button onclick="api('tempo/5')">5×</button><button onclick="api('tempo/10')">10×</button><button onclick="api('fxreset')">FX aus</button><button onclick="api('music')">♫ Musik</button><button onclick="api('musicnext')">♫ ⏭</button><button onclick="api('musicfade')">♫ Ausblenden</button></header>
 <nav id="nav"></nav><main id="grid"></main>
 <script>
 let st={tabs:[],playing:[]},cur=0;
@@ -139,6 +142,9 @@ function handle(req, res) {
       sendCommand({ cmd: 'fx', name, value: v });
       return json(res, 200, { ok: true });
     }
+    case 'music':
+    case 'musicnext':
+    case 'musicfade':
     case 'pause':
     case 'fxreset':
     case 'fade':

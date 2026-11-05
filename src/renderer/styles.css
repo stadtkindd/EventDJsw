@@ -403,3 +403,62 @@ input[type=color] { width: 54px; height: 44px; border: 1px solid var(--line); bo
   .fx-head { flex-wrap: wrap; }
   .fx-val { margin-left: 0; width: 100%; height: 28px; }
 }
+
+/* ------------------------------------------------------------ 1.3: Pausenmusik-Player, Effekt-Reset */
+#middle { flex: 1; min-height: 0; display: flex; }
+#middle > #stage { flex: 1; min-width: 0; }
+#player {
+  flex: none; width: 360px; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px;
+  background: var(--panel); border-left: 1px solid var(--line); min-height: 0; overflow: hidden;
+}
+#player[hidden] { display: none; }
+#player.drag-over { outline: 3px dashed var(--accent); outline-offset: -6px; }
+.pl-head { display: flex; align-items: center; gap: 8px; }
+.pl-h { font-weight: 800; font-size: 17px; }
+.pl-count { flex: 1; color: var(--muted); font-size: 12px; text-align: right; }
+.pl-x { width: 40px; height: 40px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 16px; }
+.pl-now { padding: 10px 12px; border-radius: 12px; background: linear-gradient(135deg, #0f5f5f, #13403f); }
+.pl-title { font-weight: 800; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-sub { font-size: 12px; opacity: .8; min-height: 16px; }
+.pl-seek { width: 100%; height: 30px; }
+.pl-times { display: flex; justify-content: space-between; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pl-ctrl { display: flex; gap: 8px; }
+.pl-btn { flex: 1; height: 50px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); font-size: 20px; }
+.pl-btn.big { flex: 1.4; background: #13a3a3; border-color: #13a3a3; color: #fff; font-size: 22px; }
+.pl-fade { flex: 1; height: 42px; border-radius: 12px; border: 1px solid #13a3a3; background: transparent; color: #5fd6d6; font-size: 16px; font-weight: 700; }
+.pl-fadetime { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.pl-fadetime .seg button { min-height: 34px; padding: 0 10px; font-size: 13px; }
+.pl-toggles { display: flex; gap: 6px; }
+.pl-tog { flex: 1; min-height: 38px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); font-size: 13px; font-weight: 700; padding: 0 4px; white-space: nowrap; }
+.pl-tog.on { background: #13a3a3; border-color: #13a3a3; color: #fff; }
+.pl-vol { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.pl-vol input { flex: 1; width: auto; }
+.pl-volval { width: 40px; text-align: right; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.pl-list { flex: 1; min-height: 110px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 2px; }
+.pl-empty { color: var(--muted); font-size: 14px; padding: 16px 8px; text-align: center; border: 2px dashed var(--line); border-radius: 12px; }
+.pl-row { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 6px; border-radius: 10px; background: #0f1219; border: 1px solid var(--line); cursor: pointer; }
+.pl-row.cur { border-color: #13a3a3; background: #0f2a2c; }
+.pl-row.missing { opacity: .5; }
+.pl-no { width: 24px; text-align: center; color: var(--muted); font-weight: 700; font-size: 13px; }
+.pl-row.cur .pl-no { color: #5fd6d6; font-size: 16px; }
+.pl-name { flex: 1; min-width: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-name small { display: block; color: var(--muted); font-size: 11px; font-weight: 500; }
+.pl-acts { display: flex; gap: 2px; }
+.pl-acts button { width: 30px; height: 34px; border-radius: 8px; border: none; background: transparent; color: var(--muted); font-size: 12px; }
+.pl-acts button:hover { background: var(--panel-2); color: var(--text); }
+.pl-acts button:disabled { opacity: .25; }
+.pl-add { display: flex; gap: 8px; }
+.pl-add .small-btn { flex: 1; }
+#btn-player.active:not(.on) { box-shadow: inset 0 0 0 2px #13a3a3; color: #5fd6d6; }
+#btn-player.on { background: #13a3a3; border-color: #13a3a3; color: #fff; }
+@media (max-width: 1100px) { #player { width: 300px; } }
+
+.fx-reset {
+  flex: none; width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line); background: #0f1219;
+  font-size: 15px; font-weight: 800; color: var(--accent); padding: 0;
+}
+.fx-reset:disabled { color: var(--muted); opacity: .35; cursor: default; }
+.fx.sel { outline: 2px solid #4fb3ff; outline-offset: 1px; }
+.fx.sel .fx-name { color: #9fd3ff; }
+.fx.sel .fx-name::before { content: "◆ "; font-size: 9px; vertical-align: 1px; }
+@media (max-width: 1300px) { .fx-reset { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; font-size: 13px; } .fx { position: relative; } .fx-name { padding-right: 28px; } }

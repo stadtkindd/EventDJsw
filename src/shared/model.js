@@ -96,6 +96,15 @@
     { id: 'tempoUp', label: 'Tempo: nächste Stufe', keys: ['+', 'NumAdd'] },
     { id: 'tempoDown', label: 'Tempo: vorherige Stufe', keys: ['-', 'NumSubtract'] },
     { id: 'tempoReset', label: 'Tempo: normal (1×)', keys: ['NumMultiply'] },
+    { id: 'fxPrev', label: 'Effektleiste: vorherigen Regler wählen', keys: ['ArrowUp'] },
+    { id: 'fxNext', label: 'Effektleiste: nächsten Regler wählen', keys: ['ArrowDown'] },
+    { id: 'fxDec', label: 'Effektleiste: gewählten Regler runter (fein)', keys: ['ArrowLeft'] },
+    { id: 'fxInc', label: 'Effektleiste: gewählten Regler hoch (fein)', keys: ['ArrowRight'] },
+    { id: 'fxSelReset', label: 'Effektleiste: gewählten Regler zurücksetzen', keys: ['Delete'] },
+    { id: 'playerPanel', label: 'Pausenmusik-Player ein/aus', keys: ['Ctrl+P'] },
+    { id: 'playerToggle', label: 'Pausenmusik: Start / Pause', keys: [] },
+    { id: 'playerNext', label: 'Pausenmusik: nächster Titel', keys: [] },
+    { id: 'playerFade', label: 'Pausenmusik: ausblenden', keys: [] },
     { id: 'edit', label: 'Bearbeiten ein/aus', keys: ['Ctrl+E'] },
     { id: 'reset', label: 'Neues Spiel (Zähler zurücksetzen)', keys: [] }
   ];
@@ -113,6 +122,46 @@
       if (Array.isArray(k[a.id])) out[a.id] = k[a.id].filter((x) => typeof x === 'string' && x).slice(0, 2);
     });
     return out;
+  }
+
+  /** Wertebereiche und Neutralwerte der Effekte (Live-Leiste und Kachel-Effekte) */
+  const FX_RANGES = {
+    tempo: { min: 0.25, max: 16, neutral: 1 },
+    bass: { min: -12, max: 15, neutral: 0 },
+    treble: { min: -12, max: 12, neutral: 0 },
+    filter: { min: -100, max: 100, neutral: 0 },
+    hall: { min: 0, max: 100, neutral: 0 },
+    echo: { min: 0, max: 100, neutral: 0 }
+  };
+
+  /** Effektwerte bereinigen; neutrale Werte entfallen */
+  function normalizeFx(fx) {
+    const out = {};
+    if (!fx || typeof fx !== 'object') return out;
+    Object.keys(FX_RANGES).forEach((k) => {
+      const r = FX_RANGES[k];
+      const v = clamp(fx[k], r.min, r.max, r.neutral);
+      if (Math.abs(v - r.neutral) > 1e-6) out[k] = Math.round(v * 100) / 100;
+    });
+    return out;
+  }
+
+  /** Pausenmusik-Player */
+  function defaultPlayer() {
+    return { tracks: [], shuffle: false, repeat: true, volume: 0.8, duck: true, fadeOutMs: 3000, open: false };
+  }
+
+  function normalizePlayer(p) {
+    p = p || {};
+    return {
+      tracks: Array.isArray(p.tracks) ? p.tracks.map(normalizeTrack).filter((x) => x.file) : [],
+      shuffle: !!p.shuffle,
+      repeat: p.repeat !== false,
+      volume: clamp(p.volume, 0, 1, 0.8),
+      duck: p.duck !== false,
+      fadeOutMs: Math.round(clamp(p.fadeOutMs, 0, 20000, 3000)),
+      open: !!p.open
+    };
   }
 
   /** Höchstzahl Reiter: 10 je Ebene, 3 Ebenen */
@@ -159,7 +208,8 @@
       settings: defaultSettings(),
       styles: defaultStyles(),
       tabs: tabs,
-      activeTabId: tabs[0].id
+      activeTabId: tabs[0].id,
+      player: defaultPlayer()
     };
   }
 
@@ -197,6 +247,8 @@
       // Fernsteuerung
       hotkey: str(t.hotkey, ''),
       midi: str(t.midi, ''),
+      // gespeicherte Effekte dieser Kachel (nur abweichende Werte), z. B. { bass: 6, tempo: 1.5 }
+      fx: normalizeFx(t.fx),
       playCount: Math.max(0, Math.floor(clamp(t.playCount, 0, 1e9, 0)))
     };
   }
@@ -317,7 +369,7 @@
     if (!tabs.length) tabs = [newTab('Reiter 1')];
     assignLayers(tabs);
     const activeTabId = tabs.some((t) => t.id === cfg.activeTabId) ? cfg.activeTabId : tabs[0].id;
-    return { version: SCHEMA_VERSION, settings, styles, tabs, activeTabId };
+    return { version: SCHEMA_VERSION, settings, styles, tabs, activeTabId, player: normalizePlayer(cfg.player) };
   }
 
   function normalizePresets(p) {
@@ -418,7 +470,7 @@
     newTab, newTile, normalizeConfig, normalizeTile, normalizeTab, normalizeStyle, normalizeTrack,
     tileFiles, tileHasAudio, normalizeGain,
     resolveLook, effectiveRows, freeSlots, moveTile, resetCounters, isAudioFile, titleFromFileName,
-    FX_MODULES, PLAYER_ACTIONS, defaultKeys, normalizeKeys, normalizePresets,
+    FX_MODULES, FX_RANGES, normalizeFx, defaultPlayer, normalizePlayer, PLAYER_ACTIONS, defaultKeys, normalizeKeys, normalizePresets,
     TABS_PER_LAYER, MAX_LAYERS, MAX_TABS, assignLayers, tabsOfLayer, layerCount
   };
 

@@ -21,7 +21,8 @@
 | **Wellenform-Editor** | Start- und Endpunkt per Finger oder Maus direkt in der Wellenform setzen. Am Endpunkt blendet der Jingle automatisch aus; Schleifen laufen zwischen Start und Ende. |
 | **Lautheit** | Automatische Messung (LUFS nach ITU-R BS.1770) und Angleichung aller Jingles auf eine Ziel-Lautheit – kein Jingle fällt mehr aus der Reihe. Pegelanzeige (VU-Meter) mit Clip-Warnung. |
 | **Playlists & Ducking** | Kacheln mit mehreren Titeln (nacheinander oder zufällig, wiederholbar). Als *Hintergrundmusik* laufen sie unter Jingles weiter und werden währenddessen automatisch abgesenkt. |
-| **Live-Effekte** | Effektleiste mit Fadern für **Tempo** (1×/2×/5×/10× und stufenlos), **Bass**, **Höhen**, **Filter**, **Hall** und **Echo** – live auf dem Master, per MIDI-Fader steuerbar. |
+| **Live-Effekte** | Effektleiste mit Fadern für **Tempo** (1×/2×/5×/10× und stufenlos), **Bass**, **Höhen**, **Filter**, **Hall** und **Echo** – live auf dem Master, fein per Pfeiltasten oder MIDI-Fader, Reset je Effekt. Effekte lassen sich dauerhaft an einer Kachel speichern. |
+| **Pausenmusik-Player** | Klassischer Playlist-Player als Seitenleiste für Pausenmusik: Liste per Drag & Drop, Titel antippen, Zufall/Endlos, Ausblenden auf Knopfdruck, wird unter Jingles automatisch abgesenkt. |
 | **Player-Tasten** | Frei belegbar: standardmäßig `Enter` = sofort alles stoppen, `Leertaste` = Pause, `Esc` = ausblenden, `+`/`−` = Tempo u. v. m. |
 | **Fernsteuerung** | Tastenkürzel pro Kachel, **MIDI-Controller** (Pads, Tasten, Regler) mit Lernfunktion, **HTTP-Schnittstelle** für Elgato Stream Deck / Bitfocus Companion und eine Browser-Fernbedienung fürs Tablet/Handy. |
 
@@ -63,7 +64,8 @@ Ausführliche Anleitung: **[docs/BEDIENUNGSANLEITUNG.md](docs/BEDIENUNGSANLEITUN
 | Pause / Weiter | ❚❚ | `Leertaste` |
 | Reiter wechseln | Reiter antippen | `Strg+1` … `Strg+0`, `Bild↑`/`Bild↓` |
 | Reiter-Ebene wechseln | **1 · 2 · 3** neben den Reitern | `Strg+Bild↑`/`Strg+Bild↓` |
-| Live-Effekte | **FX** | `Strg+F`, Tempo `+`/`−` |
+| Live-Effekte | **FX** | `Strg+F`, Tempo `+`/`−`, Regler `↑`/`↓` wählen, `←`/`→` verstellen |
+| Pausenmusik | **♫** | `Strg+P` |
 | Jingle per Tastenkürzel / MIDI | – | eigene Taste (z. B. `F1`) bzw. Pad am Controller |
 | Playlist: nächster Titel | lange drücken → *Nächster Titel* oder ⏭ in der Fußzeile | Rechtsklick |
 | Bearbeitungsmodus | ✎ | `Strg+E` |

@@ -116,6 +116,7 @@
     if (tile.role === 'bed') t.push('Hintergrundmusik (wird bei Jingles abgesenkt)');
     if (tile.loop) t.push(tile.kind === 'playlist' ? 'wiederholen' : 'Endlosschleife');
     if (tile.endAt > 0 && tile.kind !== 'playlist') t.push('Endpunkt gesetzt');
+    if (tile.fx && Object.keys(tile.fx).length) t.push('eigene Effekte: ' + fxSummary(tile.fx));
     return t.join(' · ');
   }
 
@@ -163,6 +164,7 @@
   async function checkMissing() {
     const files = [];
     cfg.tabs.forEach((t) => t.tiles.forEach((tile) => files.push(...M.tileFiles(tile))));
+    cfg.player.tracks.forEach((tr) => files.push(tr.file));
     if (!files.length) return;
     const exists = await api.filesExist(files);
     missing.clear();
@@ -233,6 +235,7 @@
     renderGrid();
     renderNowPlaying();
     renderFxBar();
+    renderPlayer();
     const mv = $('#master-vol');
     mv.value = Math.round(cfg.settings.masterVolume * 100);
     $('#master-val').textContent = mv.value + '%';
@@ -499,6 +502,7 @@
     if (tile.role === 'bed') flags.push('▽');
     if (tile.loop) flags.push('⟲');
     if (tile.endAt > 0 && !isPlaylist) flags.push('⇥');
+    if (tile.fx && Object.keys(tile.fx).length) flags.push('✦');
     const keyBadges = [];
     if (tile.hotkey) keyBadges.push(h('span', { class: 'keybadge', title: 'Tastenkürzel' }, tile.hotkey));
     if (tile.midi) keyBadges.push(h('span', { class: 'keybadge midi', title: 'MIDI: ' + midiLabel(tile.midi) }, '♫'));
@@ -642,7 +646,8 @@
       startAt: tile.startAt,
       endAt: tile.endAt,
       loop: tile.loop,
-      role: tile.role
+      role: tile.role,
+      fx: tile.fx
     };
     if (tile.kind === 'playlist') {
       o.tracks = tile.playlist.map((x) => ({ file: x.file, gainDb: x.gainDb, title: M.titleFromFileName(x.fileName || x.file) }));
@@ -695,6 +700,7 @@
     $('#btn-pause').classList.toggle('on', A.paused);
     $('#btn-pause').textContent = A.paused ? '▶' : '❚❚';
     if (cfg.settings.fxAutoReset && !A.voices.size && A.fxActive()) A.resetFx();
+    updatePlayer();
     publishState();
     updateTileStates();
     renderNowPlaying();
@@ -745,6 +751,7 @@
   }
 
   function updateProgress() {
+    updatePlayer();
     const showRem = cfg.settings.showRemaining;
     A.voices.forEach((v) => {
       const p = voiceProgress(v);
@@ -773,7 +780,7 @@
     }
     list.forEach((v) => {
       const found = findTile(v.tileId);
-      const look = found ? M.resolveLook(cfg, found.tile) : { bg: '#333', fg: '#fff' };
+      const look = found ? M.resolveLook(cfg, found.tile) : v.tileId === PLAYER_ID ? { bg: '#13a3a3', fg: '#fff' } : { bg: '#333', fg: '#fff' };
       const bar = h('div', { class: 'np-bar' });
       const time = h('span', { class: 'np-time' }, '…');
       const el = h('div', {
@@ -784,7 +791,7 @@
       v.bus === 'cue' ? h('span', { class: 'np-bus' }, '🎧 Vorhören') : null,
       v.role === 'bed' ? h('span', { class: 'np-bus', title: 'Hintergrundmusik – wird bei Jingles abgesenkt' }, '▽ BG') : null,
       v.paused ? h('span', { class: 'np-bus' }, '❚❚ Pause') : null,
-      h('span', { class: 'np-title', onclick: () => found && selectTab(found.tab.id) }, v.title, v.trackTitle ? h('small', null, v.trackTitle) : null),
+      h('span', { class: 'np-title', onclick: () => (v.tileId === PLAYER_ID ? openPlayerPanel() : found && selectTab(found.tab.id)) }, v.title, v.trackTitle ? h('small', null, v.trackTitle) : null),
       time,
       v.tracks ? h('button', { title: 'Nächster Titel', onclick: () => A.next(v.tileId) }, '⏭') : null,
       h('button', {
@@ -1450,6 +1457,41 @@
         loopCb)
     ));
 
+    // Klang & Effekte dieser Kachel
+    const fxBox = h('div');
+    const drawTileFx = () => {
+      fxBox.innerHTML = '';
+      const f = draft.fx || (draft.fx = {});
+      const get = (k) => (f[k] == null ? M.FX_RANGES[k].neutral : f[k]);
+      const setV = (k, v) => { const r = M.FX_RANGES[k]; if (Math.abs(v - r.neutral) < 1e-6) delete f[k]; else f[k] = v; };
+      const defs = {
+        tempo: { min: 50, max: 400, step: 5, bigStep: 25, scale: 100, format: (v) => fmtRate(v / 100) },
+        bass: { min: -24, max: 30, step: 1, bigStep: 2, scale: 2, format: (v) => FX_UI.bass.fmt(v / 2) },
+        treble: { min: -24, max: 24, step: 1, bigStep: 2, scale: 2, format: (v) => FX_UI.treble.fmt(v / 2) },
+        filter: { min: -100, max: 100, step: 2, bigStep: 10, scale: 1, format: FX_UI.filter.fmt },
+        hall: { min: 0, max: 100, step: 2, bigStep: 10, scale: 1, format: FX_UI.hall.fmt },
+        echo: { min: 0, max: 100, step: 2, bigStep: 10, scale: 1, format: FX_UI.echo.fmt }
+      };
+      const cols = [[], []];
+      M.FX_MODULES.forEach((k, i) => {
+        const d = defs[k];
+        cols[i % 2].push(field(FX_UI[k].name + (k === 'tempo' ? ' (0,5× … 4×)' : ''), stepper({
+          value: Math.round(get(k) * d.scale), min: d.min, max: d.max, step: d.step, bigStep: d.bigStep, format: d.format,
+          onChange: (v) => setV(k, v / d.scale)
+        })));
+      });
+      append(fxBox, h('div', { class: 'grid2' }, h('div', null, cols[0]), h('div', null, cols[1])));
+    };
+    drawTileFx();
+    append(pages.playback, h('div', { class: 'section' },
+      h('h3', null, 'Klang & Effekte dieser Kachel'),
+      h('p', { class: 'hint', style: { marginBottom: '10px' } }, 'Werden bei jedem Abspielen dieser Kachel angewendet (auch beim Vorhören) – zusätzlich zu den Live-Effekten der Effektleiste. Tipp: Jingle starten, in der Effektleiste einstellen und dort „💾 Auf Kachel“ tippen.'),
+      fxBox,
+      h('div', { class: 'row', style: { marginTop: '6px' } },
+        h('button', { class: 'small-btn', type: 'button', disabled: !A.fxActive(), title: A.fxActive() ? '' : 'Keine Live-Effekte aktiv', onclick: () => { draft.fx = M.normalizeFx(mergeFx(draft.fx, A.fx)); drawTileFx(); toast('Live-Effekte übernommen – mit „Speichern“ bestätigen.', 'ok'); } }, '✦ Aktuelle Live-Effekte übernehmen'),
+        h('button', { class: 'small-btn', type: 'button', onclick: () => { draft.fx = {}; drawTileFx(); } }, '⟲ Alle Effekte der Kachel zurücksetzen'),
+        h('button', { class: 'small-btn', type: 'button', onclick: () => { if (M.tileHasAudio(draft)) triggerTile(draft, 'cue'); } }, '🎧 Vorhören'))));
+
     // ---------------- Steuerung
     const hkVal = h('span', { class: 'learn-val' });
     const midiVal = h('span', { class: 'learn-val' });
@@ -2043,6 +2085,7 @@
     if (!(await confirmDialog('Bibliothek aufräumen?', 'Audiodateien in der EventDJ-Bibliothek, die keiner Kachel mehr zugeordnet sind, werden gelöscht.', 'Aufräumen', true))) return;
     const used = [];
     cfg.tabs.forEach((t) => t.tiles.forEach((x) => used.push(...M.tileFiles(x))));
+    cfg.player.tracks.forEach((tr) => used.push(tr.file));
     const r = await api.cleanupLibrary(used);
     toast(r.removed + ' ungenutzte Datei(en) entfernt.', 'ok');
   }
@@ -2250,6 +2293,9 @@
       case 'tempo': A.setFx('tempo', c.value); break;
       case 'fx': A.setFx(c.name, c.value); break;
       case 'fxreset': A.resetFx(); break;
+      case 'music': playerToggle(); break;
+      case 'musicnext': playerNext(); break;
+      case 'musicfade': playerFade(); break;
     }
   }
 
@@ -2280,6 +2326,88 @@
   };
 
   let fxEls = {};
+  let fxSel = null;   // per Pfeiltasten gewählter Regler
+
+  // Feinschritte für die Pfeiltasten (mit Umschalt ×5)
+  const FX_STEP = { bass: 0.5, treble: 0.5, filter: 2, hall: 2, echo: 2 };
+
+  function selectFx(name) {
+    if (!cfg.settings.fxModules.includes(name)) return;
+    fxSel = name;
+    Object.keys(fxEls).forEach((k) => fxEls[k].box.classList.toggle('sel', k === fxSel));
+  }
+
+  function currentFxSel() {
+    const mods = cfg.settings.fxModules;
+    if (!fxSel || !mods.includes(fxSel)) fxSel = mods[0] || null;
+    return fxSel;
+  }
+
+  function fxSelStep(dir) {
+    const mods = cfg.settings.fxModules;
+    if (!mods.length) return;
+    const i = mods.indexOf(currentFxSel());
+    selectFx(mods[(i + dir + mods.length) % mods.length]);
+  }
+
+  /** gewählten Regler fein verstellen (Tempo: ca. 2 % je Schritt) */
+  function fxNudge(dir, coarse) {
+    const name = currentFxSel();
+    if (!name) return;
+    const k = coarse ? 5 : 1;
+    if (name === 'tempo') {
+      const r = A.fx.tempo * Math.pow(1.02, dir * k);
+      // 1× nicht überspringen
+      const cur = A.fx.tempo;
+      A.setFx('tempo', (cur < 1 && r > 1) || (cur > 1 && r < 1) ? 1 : Math.round(r * 100) / 100);
+    } else {
+      const d = A.fxDefs[name];
+      const v = Math.round((A.fx[name] + dir * k * FX_STEP[name]) * 100) / 100;
+      // Nullpunkt bei Reglern mit Mitte einrasten
+      A.setFx(name, (A.fx[name] < 0 && v > 0) || (A.fx[name] > 0 && v < 0) ? 0 : Math.min(d.max, Math.max(d.min, v)));
+    }
+    if (!cfg.settings.fxBarOpen) toast(FX_UI[name].name + ': ' + (name === 'tempo' ? fmtRate(A.fx.tempo) : FX_UI[name].fmt(A.fx[name])), '', 900);
+  }
+
+  /** laufende Kachel, auf die „Auf Kachel speichern“ wirkt: zuletzt gestarteter Jingle (sonst Hintergrundmusik) */
+  function fxTargetTile() {
+    let best = null;
+    A.voices.forEach((v) => {
+      if (v.bus !== 'master' || v.state === 'fading') return;
+      const f = findTile(v.tileId);
+      if (!f) return;
+      const score = (v.role === 'bed' ? 0 : 1e13) + v.startedAt;
+      if (!best || score > best.score) best = { score, voice: v, tile: f.tile };
+    });
+    return best;
+  }
+
+  /** Live-Effekte dauerhaft in die laufende Kachel übernehmen */
+  async function saveFxToTile() {
+    const t = fxTargetTile();
+    if (!t) { toast('Es läuft gerade keine Kachel – starte den Jingle, stelle die Effekte ein und speichere dann.', 'err', 5000); return; }
+    if (!A.fxActive()) { toast('Es ist kein Live-Effekt aktiv.', 'err'); return; }
+    if (!(await confirmDialog('Effekte speichern?', 'Die aktuellen Live-Effekte werden in der Kachel „' + t.tile.title + '“ gespeichert und klingen künftig bei jedem Abspielen mit. Die Effektleiste wird danach zurückgesetzt.', 'Speichern', false))) return;
+    const merged = mergeFx(t.tile.fx, A.fx);
+    t.tile.fx = M.normalizeFx(merged);
+    A.resetFx();
+    A.voicesForTile(t.tile.id).forEach((v) => A.setVoiceFx(v, t.tile.fx));
+    persist();
+    renderGrid();
+    toast('Effekte in „' + t.tile.title + '“ gespeichert (Kachel-Dialog → Wiedergabe).', 'ok', 4000);
+  }
+
+  /** Kachel-Effekte + Live-Effekte zusammenfassen (Tempo multipliziert, Rest addiert) */
+  function mergeFx(a, b) {
+    a = a || {}; b = b || {};
+    const out = {};
+    M.FX_MODULES.forEach((k) => {
+      const r = M.FX_RANGES[k];
+      const x = a[k] == null ? r.neutral : a[k], y = b[k] == null ? r.neutral : b[k];
+      out[k] = Math.min(r.max, Math.max(r.min, k === 'tempo' ? x * y : x + y));
+    });
+    return out;
+  }
 
   function renderFxBar() {
     const bar = $('#fxbar');
@@ -2292,15 +2420,18 @@
     if (!mods.length) bar.appendChild(h('div', { class: 'fx-empty' }, 'Keine Effekte ausgewählt – unter ⚙ Einstellungen → Effekte festlegen.'));
     mods.forEach((name) => {
       const ui = FX_UI[name];
-      const val = h('button', { class: 'fx-val', title: 'Zurücksetzen' , onclick: () => A.setFx(name, A.fxDefs[name].neutral) });
+      const val = h('button', { class: 'fx-val', title: 'Zurücksetzen', onclick: () => A.setFx(name, A.fxDefs[name].neutral) });
+      const reset = h('button', { class: 'fx-reset', title: ui.name + ' zurücksetzen', onclick: () => A.setFx(name, A.fxDefs[name].neutral) }, '⟲');
       const slider = name === 'tempo'
         ? h('input', { type: 'range', min: '0', max: '1000', step: '1', 'aria-label': ui.name })
         : h('input', { type: 'range', min: String(ui.min), max: String(ui.max), step: String(ui.step), 'aria-label': ui.name });
       slider.addEventListener('input', () => A.setFx(name, name === 'tempo' ? posToTempo(Number(slider.value)) : Number(slider.value)));
       slider.addEventListener('dblclick', () => A.setFx(name, A.fxDefs[name].neutral));
       const box = h('div', { class: 'fx ' + name, title: ui.hint || '' },
-        h('div', { class: 'fx-head' }, h('span', { class: 'fx-name' }, ui.name), val),
+        h('div', { class: 'fx-head' }, h('span', { class: 'fx-name' }, ui.name), val, reset),
         slider);
+      // antippen = Regler für die Pfeiltasten auswählen
+      box.addEventListener('pointerdown', () => selectFx(name));
       let presets = null;
       if (name === 'tempo') {
         presets = h('div', { class: 'fx-presets' }, s.tempoPresets.map((r) =>
@@ -2308,10 +2439,12 @@
         box.appendChild(presets);
       }
       bar.appendChild(box);
-      fxEls[name] = { box, val, slider, presets };
+      fxEls[name] = { box, val, slider, presets, reset };
     });
+    selectFx(currentFxSel());
     bar.appendChild(h('div', { class: 'fx-side' },
       h('button', { class: 'danger', title: 'Alle Effekte auf neutral', onclick: () => A.resetFx() }, '⟲ Alle aus'),
+      h('button', { title: 'Aktuelle Effekte dauerhaft in der laufenden Kachel speichern', onclick: saveFxToTile }, '💾 Auf Kachel'),
       h('button', { title: 'Effektleiste einrichten', onclick: () => openSettings({ page: 'fx' }) }, '⚙ Einrichten')));
     updateFxBar();
   }
@@ -2322,6 +2455,7 @@
       const v = A.fx[name];
       const changed = Math.abs(v - A.fxDefs[name].neutral) > 1e-6;
       e.box.classList.toggle('changed', changed);
+      e.reset.disabled = !changed;
       if (name === 'tempo') {
         e.val.textContent = fmtRate(v);
         if (document.activeElement !== e.slider) e.slider.value = String(tempoToPos(v));
@@ -2361,6 +2495,223 @@
     A.setFx(name, Math.round(v / FX_UI[name].step) * FX_UI[name].step);
   }
 
+  function fxSummary(fx) {
+    return Object.keys(fx || {}).map((k) => FX_UI[k].name + ' ' + (k === 'tempo' ? fmtRate(fx[k]) : FX_UI[k].fmt(fx[k]))).join(', ');
+  }
+
+  // ================================================================ Pausenmusik-Player
+
+  const PLAYER_ID = '__player';
+  let plEls = null;
+
+  function playerVoice() {
+    return A.voicesForTile(PLAYER_ID, 'master').find((v) => v.state !== 'fading') || null;
+  }
+
+  function playerTrackList() {
+    return cfg.player.tracks.map((tr) => ({ file: tr.file, gainDb: tr.gainDb, title: M.titleFromFileName(tr.fileName || tr.file), ref: tr }));
+  }
+
+  /** Index (in cfg.player.tracks) des gerade laufenden Titels */
+  function playerCurrentIndex(v) {
+    v = v || playerVoice();
+    if (!v) return -1;
+    const i = A.currentTrackIndex(v);
+    const t = i >= 0 && v.tracks[i];
+    return t ? cfg.player.tracks.indexOf(t.ref) : -1;
+  }
+
+  function playerStart(index) {
+    const P = cfg.player;
+    if (!P.tracks.length) { toast('Die Pausenmusik-Liste ist leer – Titel hinzufügen.', 'err'); openPlayerPanel(); return; }
+    const v = playerVoice();
+    if (v) {
+      if (index == null) { A.toggleVoicePause(v); return; }
+      const tl = v.tracks.findIndex((t) => t.ref === P.tracks[index]);
+      if (tl >= 0) { A.jumpTo(v, tl); return; }
+    }
+    // andere Hintergrundmusik verdrängen (wie bei Kacheln mit Rolle „Hintergrundmusik“)
+    if (cfg.settings.playMode === 'exclusive') A.stopBus('master', true, null, (x) => x.role === 'bed' && x.tileId !== PLAYER_ID);
+    A.stopTile(PLAYER_ID, true, 'master');
+    A.play({ id: PLAYER_ID, title: 'Pausenmusik' }, {
+      bus: 'master', tracks: playerTrackList(), shuffle: P.shuffle, loop: P.repeat, role: 'bed', duck: P.duck,
+      volume: P.volume, fadeIn: 800, fadeOut: P.fadeOutMs, startIndex: index == null ? undefined : index
+    });
+  }
+
+  function playerToggle() { playerStart(null); }
+  function playerNext() { const v = playerVoice(); if (v) A.next(PLAYER_ID); else playerStart(null); }
+  function playerPrev() { const v = playerVoice(); if (v) A.prev(v); }
+  function playerFade() { A.voicesForTile(PLAYER_ID, 'master').forEach((v) => A.stop(v.id, true, cfg.player.fadeOutMs)); }
+  function playerStopNow() { A.stopTile(PLAYER_ID, false, 'master'); }
+
+  /** nach Änderungen an der Liste die laufende Wiedergabe nachführen */
+  function playerSync() {
+    const v = playerVoice();
+    if (v) {
+      const curRef = (v.tracks[A.currentTrackIndex(v)] || {}).ref;
+      const list = playerTrackList();
+      A.setTracks(v, list, list.findIndex((t) => t.ref === curRef), cfg.player.shuffle);
+      A.setVoiceLoop(v, cfg.player.repeat);
+      A.setVoiceDuck(v, cfg.player.duck);
+      A.setVoiceVolume(v, cfg.player.volume);
+    }
+    persist();
+    renderPlayer();
+  }
+
+  function openPlayerPanel() { if (!cfg.player.open) togglePlayerPanel(true); }
+  function togglePlayerPanel(open) {
+    cfg.player.open = open == null ? !cfg.player.open : !!open;
+    persist();
+    renderPlayer();
+  }
+
+  async function playerAddFiles(paths) {
+    const audio = paths.filter((p) => M.isAudioFile(p) || /^blob:/.test(p));
+    if (audio.length < paths.length) toast((paths.length - audio.length) + ' Datei(en) übersprungen (kein Audioformat).', 'err');
+    if (!audio.length) return;
+    const res = await api.importFiles(audio, cfg.settings.copyToLibrary);
+    const added = [];
+    res.forEach((r) => {
+      if (!r.ok) { toast('Import fehlgeschlagen: ' + r.source + ' – ' + r.error, 'err', 6000); return; }
+      const tr = M.normalizeTrack({ file: r.path, fileName: fileNames.get(r.path) || r.name });
+      cfg.player.tracks.push(tr);
+      missing.delete(tr.file);
+      added.push(tr);
+    });
+    playerSync();
+    if (added.length) toast(added.length + ' Titel zur Pausenmusik hinzugefügt.', 'ok');
+    for (const tr of added) { tr.duration = Math.max(0, await A.probeDuration(tr.file)); renderPlayerList(); }
+    persist();
+    if (cfg.settings.normalizeOnImport) for (const tr of added) { await queueAnalysis(tr, true); }
+    playerSync();
+  }
+
+  function renderPlayer() {
+    const box = $('#player');
+    const P = cfg.player;
+    box.hidden = !P.open;
+    $('#btn-player').classList.toggle('on', P.open);
+    $('#btn-player').classList.toggle('active', !!A.voicesForTile(PLAYER_ID, 'master').length);
+    if (!P.open) { plEls = null; return; }
+    box.innerHTML = '';
+    const title = h('div', { class: 'pl-title' });
+    const sub = h('div', { class: 'pl-sub' });
+    const seek = h('input', { type: 'range', min: '0', max: '1000', step: '1', value: '0', class: 'pl-seek', 'aria-label': 'Position' });
+    const tCur = h('span'), tRem = h('span');
+    seek.addEventListener('input', () => {
+      const v = playerVoice();
+      if (v && Number.isFinite(v.audio.duration)) A.seek(v, (Number(seek.value) / 1000) * v.audio.duration);
+    });
+    const playBtn = h('button', { class: 'pl-btn big', title: 'Start / Pause', onclick: playerToggle }, '▶');
+    const tog = (label, key, title) => h('button', {
+      class: 'pl-tog' + (P[key] ? ' on' : ''), title,
+      onclick: () => { P[key] = !P[key]; playerSync(); }
+    }, label);
+    const vol = h('input', { type: 'range', min: '0', max: '100', step: '1', value: String(Math.round(P.volume * 100)), 'aria-label': 'Lautstärke Pausenmusik' });
+    const volVal = h('span', { class: 'pl-volval' }, Math.round(P.volume * 100) + '%');
+    vol.addEventListener('input', () => {
+      P.volume = Number(vol.value) / 100;
+      volVal.textContent = vol.value + '%';
+      A.setVoiceVolume(playerVoice(), P.volume);
+      persist();
+    });
+    const list = h('div', { class: 'pl-list' });
+    const fadeSel = segmented([['1000', '1 s'], ['3000', '3 s'], ['5000', '5 s'], ['10000', '10 s']], String(P.fadeOutMs), (v) => { P.fadeOutMs = Number(v); persist(); });
+    fadeSel.title = 'Ausblendzeit';
+
+    append(box, [
+      h('div', { class: 'pl-head' },
+        h('span', { class: 'pl-h' }, '♫ Pausenmusik'),
+        h('span', { class: 'pl-count' }),
+        h('button', { class: 'pl-x', title: 'Player ausblenden (Musik läuft weiter)', onclick: () => togglePlayerPanel(false) }, '✕')),
+      h('div', { class: 'pl-now' }, title, sub, seek, h('div', { class: 'pl-times' }, tCur, tRem)),
+      h('div', { class: 'pl-ctrl' },
+        h('button', { class: 'pl-btn', title: 'Zurück / Titelanfang', onclick: playerPrev }, '⏮'),
+        playBtn,
+        h('button', { class: 'pl-btn', title: 'Nächster Titel', onclick: playerNext }, '⏭'),
+        h('button', { class: 'pl-btn', title: 'Sofort stoppen', onclick: playerStopNow }, '■')),
+      h('div', { class: 'pl-fadetime' },
+        h('button', { class: 'pl-fade', title: 'Pausenmusik sanft ausblenden', onclick: playerFade }, '▼ Ausblenden'),
+        fadeSel),
+      h('div', { class: 'pl-toggles' },
+        tog('⤮ Zufall', 'shuffle', 'Zufällige Reihenfolge'),
+        tog('⟳ Endlos', 'repeat', 'Liste endlos wiederholen'),
+        tog('▽ Ducking', 'duck', 'Unter Jingles automatisch leiser')),
+      h('div', { class: 'pl-vol' }, h('span', null, 'Lautstärke'), vol, volVal),
+      list,
+      h('div', { class: 'pl-add' },
+        h('button', { class: 'small-btn', onclick: async () => { const p = await api.pickAudio(true); if (p && p.length) playerAddFiles(p); } }, '+ Titel'),
+        h('button', { class: 'small-btn', title: 'Alle Titel entfernen', disabled: !P.tracks.length, onclick: async () => {
+          if (!(await confirmDialog('Liste leeren?', 'Alle ' + P.tracks.length + ' Titel aus der Pausenmusik entfernen? (Die Dateien bleiben erhalten.)', 'Leeren', true))) return;
+          playerStopNow(); P.tracks = []; playerSync();
+        } }, '🗑 Leeren'))
+    ]);
+    // Dateien direkt in den Player ziehen
+    box.ondragover = (e) => { if (Array.from(e.dataTransfer.types).includes('Files')) { e.preventDefault(); e.stopPropagation(); box.classList.add('drag-over'); } };
+    box.ondragleave = () => box.classList.remove('drag-over');
+    box.ondrop = (e) => {
+      if (!Array.from(e.dataTransfer.types).includes('Files')) return;
+      e.preventDefault(); e.stopPropagation(); box.classList.remove('drag-over');
+      playerAddFiles(Array.from(e.dataTransfer.files).map((f) => { const p = api.pathForFile(f); if (p) fileNames.set(p, f.name); return p; }).filter(Boolean));
+    };
+    plEls = { title, sub, seek, tCur, tRem, playBtn, list, count: box.querySelector('.pl-count') };
+    renderPlayerList();
+    updatePlayer();
+  }
+
+  function renderPlayerList() {
+    if (!plEls) return;
+    const P = cfg.player;
+    const list = plEls.list;
+    list.innerHTML = '';
+    plEls.count.textContent = P.tracks.length ? P.tracks.length + ' Titel · ' + fmtTime(P.tracks.reduce((a, t) => a + (t.duration || 0), 0)) : '';
+    if (!P.tracks.length) {
+      list.appendChild(h('div', { class: 'pl-empty' }, 'Noch keine Titel. Audiodateien hierher ziehen oder „+ Titel hinzufügen“.'));
+      return;
+    }
+    const cur = playerCurrentIndex();
+    const move = (i, d) => { const [x] = P.tracks.splice(i, 1); P.tracks.splice(i + d, 0, x); playerSync(); };
+    P.tracks.forEach((tr, i) => {
+      const row = h('div', { class: 'pl-row' + (i === cur ? ' cur' : '') + (missing.has(tr.file) ? ' missing' : ''), title: 'Antippen = diesen Titel spielen' },
+        h('span', { class: 'pl-no' }, i === cur ? '♪' : String(i + 1)),
+        h('span', { class: 'pl-name' }, M.titleFromFileName(tr.fileName || tr.file), h('small', null, tr.duration ? fmtTime(tr.duration) : '')),
+        h('span', { class: 'pl-acts' },
+          h('button', { title: 'Nach oben', disabled: i === 0, onclick: (e) => { e.stopPropagation(); move(i, -1); } }, '▲'),
+          h('button', { title: 'Nach unten', disabled: i === P.tracks.length - 1, onclick: (e) => { e.stopPropagation(); move(i, 1); } }, '▼'),
+          h('button', { title: 'Aus der Liste entfernen', onclick: (e) => { e.stopPropagation(); P.tracks.splice(i, 1); playerSync(); } }, '✕')));
+      row.addEventListener('click', () => playerStart(i));
+      list.appendChild(row);
+    });
+  }
+
+  /** Anzeige (Titel, Zeit, Knöpfe) – wird laufend aufgerufen */
+  let plLastCur = -2;
+  function updatePlayer() {
+    $('#btn-player').classList.toggle('active', !!A.voicesForTile(PLAYER_ID, 'master').length);
+    if (!plEls) return;
+    const all = A.voicesForTile(PLAYER_ID, 'master');
+    const v = playerVoice() || all[0];
+    const cur = playerCurrentIndex(v);
+    if (cur !== plLastCur) { plLastCur = cur; renderPlayerList(); }
+    if (!v) {
+      plEls.title.textContent = cfg.player.tracks.length ? 'Bereit' : 'Keine Titel';
+      plEls.sub.textContent = cfg.player.tracks.length ? 'Antippen ▶ oder einen Titel wählen' : '';
+      plEls.playBtn.textContent = '▶';
+      plEls.seek.value = '0'; plEls.tCur.textContent = ''; plEls.tRem.textContent = '';
+      return;
+    }
+    plEls.title.textContent = v.trackTitle || 'Pausenmusik';
+    plEls.sub.textContent = v.state === 'fading' ? 'blendet aus …' : v.paused ? 'Pause' : (A.isBedDucked() && v.duck ? 'abgesenkt (Jingle läuft)' : 'läuft');
+    plEls.playBtn.textContent = v.paused || v.state === 'fading' ? '▶' : '❚❚';
+    const a = v.audio;
+    const dur = Number.isFinite(a.duration) ? a.duration : 0;
+    if (document.activeElement !== plEls.seek) plEls.seek.value = dur ? String(Math.round((a.currentTime / dur) * 1000)) : '0';
+    plEls.tCur.textContent = fmtTime(a.currentTime || 0);
+    plEls.tRem.textContent = dur ? '−' + fmtTime((dur - a.currentTime) / (a.playbackRate || 1)) : '';
+  }
+
   // ================================================================ Player-Aktionen (Tastatur)
 
   const FIXED_KEYS = ['F11', 'F12', 'Ctrl+R'].concat([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => 'Ctrl+' + n));
@@ -2393,8 +2744,19 @@
     toast(p ? 'Pause – nochmal drücken setzt fort.' : 'Weiter.', '', 1200);
   }
 
-  function runAction(id) {
+  const FX_KEY_ACTIONS = ['fxPrev', 'fxNext', 'fxInc', 'fxDec', 'fxSelReset'];
+
+  function runAction(id, coarse) {
     switch (id) {
+      case 'fxPrev': fxSelStep(-1); break;
+      case 'fxNext': fxSelStep(1); break;
+      case 'fxInc': fxNudge(1, coarse); break;
+      case 'fxDec': fxNudge(-1, coarse); break;
+      case 'fxSelReset': { const n = currentFxSel(); if (n) A.setFx(n, A.fxDefs[n].neutral); break; }
+      case 'playerPanel': togglePlayerPanel(); break;
+      case 'playerToggle': playerToggle(); break;
+      case 'playerNext': playerNext(); break;
+      case 'playerFade': playerFade(); break;
       case 'stopAll': A.stopAll(false); break;
       case 'pause': togglePause(); break;
       case 'fadeAll': A.stopAll(true); break;
@@ -2533,6 +2895,7 @@
     $('#btn-stopall').addEventListener('click', () => A.stopAll(false));
     $('#btn-pause').addEventListener('click', togglePause);
     $('#btn-fx').addEventListener('click', () => toggleFxBar());
+    $('#btn-player').addEventListener('click', () => togglePlayerPanel());
     // Fokus nicht auf Knöpfen stehen lassen – sonst lösen Leertaste/Enter den zuletzt geklickten Knopf aus
     document.addEventListener('pointerup', (e) => {
       const b = e.target.closest && e.target.closest('button, input[type=range]');
@@ -2603,11 +2966,19 @@
         e.preventDefault();
         return;
       }
-      const act = actionForKey(key);
+      let act = actionForKey(key);
+      let coarse = false;
+      // Umschalt + Pfeil = grober Schritt
+      if (!act && e.shiftKey) {
+        const plain = actionForKey(key.replace(/(^|\+)Shift\+/, '$1'));
+        if (plain === 'fxInc' || plain === 'fxDec') { act = plain; coarse = true; }
+      }
+      // Effekt-Pfeiltasten nur bei geöffneter Effektleiste (sonst bleiben die Tasten frei)
+      if (act && FX_KEY_ACTIONS.includes(act) && !cfg.settings.fxBarOpen) act = null;
       if (act) {
         e.preventDefault();
-        if (e.repeat && !['tempoUp', 'tempoDown', 'nextTab', 'prevTab'].includes(act)) return;
-        runAction(act);
+        if (e.repeat && !['tempoUp', 'tempoDown', 'nextTab', 'prevTab', 'fxInc', 'fxDec'].includes(act)) return;
+        runAction(act, coarse);
         return;
       }
       if (!editMode && !e.repeat) {

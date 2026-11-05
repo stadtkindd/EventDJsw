@@ -1,5 +1,14 @@
 # Änderungen
 
+## 1.3.0 – 2026-11-05
+
+- **Pausenmusik-Player** (Knopf ♫ unten bzw. `Strg+P`): eigenständiger Playlist-Player als Seitenleiste – Titel per Ziehen oder „+ Titel“ hinzufügen, Reihenfolge ändern, Titel antippen zum Abspielen, ⏮ ❚❚ ⏭ ■, Spulen, **Ausblenden** mit wählbarer Zeit (1/3/5/10 s), Zufall, Endlos, Lautstärke. Läuft unabhängig von den Kacheln weiter und wird bei Jingles automatisch abgesenkt (Ducking, abschaltbar). Die Liste wird gespeichert und ist im Set-Export enthalten.
+- **Reset-Knopf ⟲ an jedem Effekt** – setzt nur diesen Effekt zurück.
+- **Effekte per Pfeiltasten:** Regler antippen oder mit `↑`/`↓` wählen, mit `←`/`→` fein verstellen (`Umschalt` = grob), `Entf` setzt den gewählten Regler zurück. Nur aktiv, solange die Effektleiste offen ist.
+- **Effekte pro Kachel speichern:** im Kachel-Dialog → Wiedergabe → „Klang & Effekte dieser Kachel“ (Tempo, Bass, Höhen, Filter, Hall, Echo) oder direkt aus der Effektleiste mit „💾 Auf Kachel“. Kacheln mit eigenen Effekten zeigen ✦.
+- HTTP-Fernsteuerung: `/api/music`, `/api/musicnext`, `/api/musicfade`.
+- Behoben: „Nächster Titel“ oder Pause direkt nach dem Start einer Playlist konnte die Wiedergabe beenden; Playlists ohne Zufallsmodus wurden nach dem ersten Durchlauf gemischt.
+
 ## 1.2.0 – 2026-11-05
 
 - **Reiterleiste neu:** alle Reiter immer gleich breit (10 Plätze je Leiste), kein Scrollbalken mehr. Lange Namen werden automatisch verkleinert bzw. zweizeilig eingepasst.

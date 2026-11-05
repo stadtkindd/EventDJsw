@@ -141,6 +141,9 @@ function exportSet(cfg, target) {
       tile.playlist = tile.playlist.filter((tr) => tr.file);
     })
   );
+  // Pausenmusik-Player
+  clean.player.tracks.forEach((tr) => (tr.file = pack(tr.file)));
+  clean.player.tracks = clean.player.tracks.filter((tr) => tr.file);
   zip.addFile('set.json', Buffer.from(JSON.stringify(clean, null, 2), 'utf8'));
   zip.writeZip(target);
   return { ok: true, path: target, files: added.size, missing };
@@ -173,6 +176,8 @@ function importSet(file) {
         tile.playlist = tile.playlist.filter((tr) => tr.file);
       })
     );
+    cfg.player.tracks.forEach((tr) => (tr.file = map.get(tr.file) || ''));
+    cfg.player.tracks = cfg.player.tracks.filter((tr) => tr.file);
     return { ok: true, config: cfg, files: map.size };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };

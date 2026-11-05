@@ -205,9 +205,23 @@ Wie stark und wie schnell abgesenkt wird, stellst du unter *Einstellungen → Wi
 | `/api/tempo/<faktor>` | Tempo setzen, z. B. `/api/tempo/2` oder `/api/tempo/0.5` |
 | `/api/fx/<name>/<wert>` | Effekt setzen: `bass`, `treble` (dB), `filter` (−100…100), `hall`, `echo` (0…100) |
 | `/api/fxreset` | alle Effekte zurücksetzen |
+| `/api/music` | Pausenmusik Start / Pause |
+| `/api/musicnext` | Pausenmusik: nächster Titel |
+| `/api/musicfade` | Pausenmusik ausblenden |
 | `/api/state` | Reiter, Kacheln und laufende Jingles als JSON |
 
 **Tablet/Handy als Fernbedienung:** zusätzlich *Auch im Netzwerk erreichbar* einschalten und auf dem Tablet die angezeigte Adresse (z. B. `http://192.168.1.20:8765/`) im Browser öffnen – dort erscheinen alle Reiter und Kacheln als Buttons. Windows fragt beim ersten Mal ggf. nach einer Firewall-Freigabe. Nur in vertrauenswürdigen Netzwerken verwenden (kein Passwortschutz).
+
+## 14a. Pausenmusik-Player
+
+Für Musik in Satzpausen, Halbzeit, Einlass usw. gibt es einen eigenen **Playlist-Player** – unabhängig von den Kacheln. Öffnen mit **♫** in der Fußzeile (oder `Strg+P`); er erscheint rechts als Seitenleiste. Schließen mit ✕ – die Musik läuft dabei weiter.
+
+- **Titel hinzufügen:** Audiodateien aus dem Explorer auf den Player ziehen oder **+ Titel**. Mit ▲ ▼ die Reihenfolge ändern, ✕ entfernt einen Titel, **🗑 Leeren** die ganze Liste.
+- **Abspielen:** ▶ startet (bzw. ❚❚ pausiert), einen Titel in der Liste antippen spielt genau diesen. ⏮ springt an den Titelanfang bzw. zum vorherigen Titel, ⏭ zum nächsten, ■ stoppt sofort. Über den Schieber im grünen Feld kannst du im Titel spulen.
+- **▼ Ausblenden** blendet die Pausenmusik sanft aus – die Dauer wählst du daneben (1, 3, 5 oder 10 s). Ideal, wenn das Spiel weitergeht.
+- **⤮ Zufall**, **⟳ Endlos** (Liste wiederholen), **▽ Ducking** (unter Jingles automatisch leiser) und eine eigene **Lautstärke**.
+
+Die Pausenmusik läuft über den Master-Ausgang. Jingles verdrängen sie nicht, sondern senken sie nur ab (Ducking, Pegel/Zeit unter Einstellungen → Wiedergabe). Startest du eine Kachel mit der Rolle *Hintergrundmusik*, ersetzt diese die Pausenmusik (und umgekehrt). `Leertaste` (Pause) und `Enter` (Stopp) wirken auch auf die Pausenmusik. Die Titelliste wird gespeichert und ist im Set-Export enthalten.
 
 ## 15. Tastenkürzel (Player-Tasten)
 
@@ -224,8 +238,12 @@ Unter **⚙ Einstellungen → Tasten** legst du für jede Player-Aktion bis zu z
 | `Num ×` | Tempo normal (1×) |
 | `Strg+F` | Effektleiste ein/aus |
 | `Rücktaste` | alle Effekte zurücksetzen |
+| `↑` / `↓` | Effektleiste: Regler wählen (nur bei offener Leiste) |
+| `←` / `→` (mit `Umschalt` grob) | Effektleiste: gewählten Regler fein verstellen |
+| `Entf` | Effektleiste: gewählten Regler zurücksetzen |
+| `Strg+P` | Pausenmusik-Player ein/aus |
 | `Strg+E` | Bearbeitungsmodus ein/aus |
-| – (frei belegbar) | Playlist: nächster Titel · Neues Spiel |
+| – (frei belegbar) | Pausenmusik Start/Pause · nächster Titel · ausblenden · Playlist-Kachel: nächster Titel · Neues Spiel |
 | `Strg+1` … `Strg+9`, `Strg+0` | Reiter 1–10 der angezeigten Ebene (fest) |
 | `F11` | Vollbild (fest) |
 | eigene Kürzel | Kachel auslösen (Kachel-Dialog → Steuerung) |
@@ -245,7 +263,11 @@ Der Knopf **FX** in der Fußzeile öffnet die Effektleiste. Alle Effekte wirken 
 | **Hall** | Raumhall wie in einer großen Halle |
 | **Echo** | Wiederholungen (Echo-Zeit in den Einstellungen) |
 
-Den **Wert oben rechts** antippen oder den Regler doppelklicken setzt einen Effekt zurück, **⟲ Alle aus** setzt alle zurück. Solange ein Effekt aktiv ist, ist der FX-Knopf orange umrandet. Ein eingebauter Limiter verhindert Übersteuerung (z. B. bei viel Bass).
+Der kleine Knopf **⟲** an jedem Effekt (oder Wert antippen bzw. Regler doppelklicken) setzt nur diesen Effekt zurück, **⟲ Alle aus** setzt alle zurück.
+
+**Gefühlvoll per Pfeiltasten:** Einen Regler antippen (oder mit `↑`/`↓` wählen – der gewählte Regler ist blau umrandet), dann mit `←`/`→` in kleinen Schritten verstellen; gedrückt halten fährt den Regler gleichmäßig. Mit `Umschalt` sind die Schritte 5× so groß, `Entf` setzt den gewählten Regler zurück. Die Pfeiltasten wirken nur, solange die Effektleiste geöffnet ist.
+
+**Effekte an einer Kachel speichern:** Jingle starten, Effekte einstellen und **💾 Auf Kachel** tippen – die Werte werden in der laufenden Kachel gespeichert und klingen künftig bei jedem Abspielen mit (die Effektleiste wird danach zurückgesetzt). Alternativ im Kachel-Dialog → **Wiedergabe** → *Klang & Effekte dieser Kachel* die Werte direkt einstellen. Kacheln mit eigenen Effekten zeigen oben rechts ✦. Live-Effekte der Leiste wirken zusätzlich obendrauf. Solange ein Effekt aktiv ist, ist der FX-Knopf orange umrandet. Ein eingebauter Limiter verhindert Übersteuerung (z. B. bei viel Bass).
 
 **Tonhöhe beim Tempo:** Standardmäßig klingt ein schnelleres Tempo wie ein schneller laufendes Band (höher, „Mickymaus“) – das funktioniert bei jedem Tempo. Mit *Tonhöhe beim Beschleunigen halten* bleibt die Tonhöhe gleich (bis 4×, darüber automatisch Band-Modus).
 

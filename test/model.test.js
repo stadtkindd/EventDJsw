@@ -129,4 +129,22 @@ test('Tempo-Stufen werden bereinigt, 1× ist immer dabei', () => {
   assert.deepStrictEqual(c.settings.fxMidi, { bass: 'cc:1:7' });
 });
 
+test('Kachel-Effekte: neutrale Werte entfallen, Bereiche werden begrenzt', () => {
+  const t = M.normalizeTile({ fx: { bass: 6, treble: 0, tempo: 1, hall: 500, echo: 'x', filter: -30 } });
+  assert.deepStrictEqual(t.fx, { bass: 6, filter: -30, hall: 100 });
+  assert.deepStrictEqual(M.normalizeTile({}).fx, {});
+});
+
+test('Pausenmusik-Player: Standardwerte und Reparatur', () => {
+  const c = M.normalizeConfig({});
+  assert.deepStrictEqual(c.player.tracks, []);
+  assert.strictEqual(c.player.repeat, true);
+  assert.strictEqual(c.player.duck, true);
+  const d = M.normalizeConfig({ player: { tracks: [{ file: 'a.mp3' }, { file: '' }], volume: 7, repeat: false, fadeOutMs: -5 } });
+  assert.strictEqual(d.player.tracks.length, 1);
+  assert.strictEqual(d.player.volume, 1);
+  assert.strictEqual(d.player.repeat, false);
+  assert.strictEqual(d.player.fadeOutMs, 0);
+});
+
 console.log('\n' + n + ' Tests bestanden.');
