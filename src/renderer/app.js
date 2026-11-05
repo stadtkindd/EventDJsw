@@ -135,11 +135,15 @@
     A.on('error', (e) => toast('„' + e.voice.title + '“: ' + e.error, 'err', 5000));
     A.on('device-error', (e) => toast('Ausgabegerät nicht verfügbar – Windows-Standard wird genutzt.', 'err', 5000));
     A.on('devices-changed', () => refreshDevices(false));
+    A.on('fx', () => { updateFxBar(); publishState(); });
+    A.setPitchLock(cfg.settings.pitchLock);
+    A.setEchoTime(cfg.settings.echoMs);
 
     bindTopbar();
     bindBottombar();
     bindDragDrop();
     bindKeys();
+    onTabsResize();
     if (api.onSetOpenRequest) api.onSetOpenRequest((file) => importSet(file));
     if (api.onRemoteCommand) api.onRemoteCommand(onRemoteCommand);
     initMidi();
@@ -228,6 +232,7 @@
     renderTabs();
     renderGrid();
     renderNowPlaying();
+    renderFxBar();
     const mv = $('#master-vol');
     mv.value = Math.round(cfg.settings.masterVolume * 100);
     $('#master-val').textContent = mv.value + '%';
@@ -240,18 +245,101 @@
     return playing;
   }
 
+  // ---------------------------------------------------------------- Reiter (10 je Ebene, bis zu 3 Ebenen)
+
+  let viewLayer = null;   // angezeigte Ebene; null = Ebene des aktiven Reiters
+
+  function currentLayer() {
+    if (viewLayer == null || !layerUsable(viewLayer)) viewLayer = (activeTab() && activeTab().layer) || 0;
+    return Math.min(viewLayer, M.MAX_LAYERS - 1);
+  }
+
+  /** alle Reiter in Anzeigereihenfolge (Ebene 1, 2, 3) */
+  function orderedTabs() {
+    const out = [];
+    for (let L = 0; L < M.MAX_LAYERS; L++) out.push(...M.tabsOfLayer(cfg.tabs, L));
+    return out;
+  }
+
+  function layerUsable(L) {
+    if (M.tabsOfLayer(cfg.tabs, L).length) return true;
+    // leere Ebene nur im Bearbeitungsmodus, und nur die erste leere nach den belegten
+    return editMode && L <= M.layerCount(cfg.tabs) && cfg.tabs.length < M.MAX_TABS;
+  }
+
+  function showLayer(L) {
+    if (L < 0 || L >= M.MAX_LAYERS || !layerUsable(L)) return;
+    viewLayer = L;
+    renderTabs();
+  }
+
+  function stepLayer(dir) {
+    for (let i = 1; i <= M.MAX_LAYERS; i++) {
+      const L = (currentLayer() + dir * i + M.MAX_LAYERS * 2) % M.MAX_LAYERS;
+      if (layerUsable(L)) { showLayer(L); return; }
+    }
+  }
+
+  /** Reiter auf eine andere Ebene verschieben (ans Ende) */
+  function moveTabToLayer(tab, L) {
+    if ((tab.layer || 0) === L) return;
+    if (M.tabsOfLayer(cfg.tabs, L).length >= M.TABS_PER_LAYER) { toast('Ebene ' + (L + 1) + ' ist voll (max. ' + M.TABS_PER_LAYER + ' Reiter).', 'err'); return; }
+    cfg.tabs = cfg.tabs.filter((t) => t !== tab);
+    tab.layer = L;
+    cfg.tabs.push(tab);
+    persist();
+    renderTabs();
+    toast('„' + tab.name + '“ liegt jetzt auf Ebene ' + (L + 1) + '.', 'ok');
+  }
+
+  function renderLayers() {
+    const box = $('#layers');
+    box.innerHTML = '';
+    const cur = currentLayer();
+    for (let L = 0; L < M.MAX_LAYERS; L++) {
+      const tabs = M.tabsOfLayer(cfg.tabs, L);
+      const usable = layerUsable(L);
+      const hasActive = tabs.some((t) => t.id === cfg.activeTabId);
+      const playing = tabs.some(tabIsPlaying);
+      const b = h('button', {
+        class: 'layer' + (L === cur ? ' on' : '') + (hasActive ? ' has-active' : ''),
+        disabled: !usable,
+        title: 'Reiter-Ebene ' + (L + 1) + (tabs.length ? ' (' + tabs.length + ' Reiter)' : editMode ? ' – leer, Reiter hier anlegen' : ' – leer'),
+        onclick: () => showLayer(L),
+        dataset: { layer: String(L) }
+      }, String(L + 1), playing ? h('span', { class: 'dot' }) : null);
+      // Reiter auf eine Ebenen-Taste ziehen = auf diese Ebene verschieben
+      b.addEventListener('dragover', (e) => {
+        if (Array.from(e.dataTransfer.types).includes('text/edj-tab')) { e.preventDefault(); b.classList.add('drag-over'); }
+      });
+      b.addEventListener('dragleave', () => b.classList.remove('drag-over'));
+      b.addEventListener('drop', (e) => {
+        b.classList.remove('drag-over');
+        const id = e.dataTransfer.getData('text/edj-tab');
+        const tab = cfg.tabs.find((t) => t.id === id);
+        if (tab) { e.preventDefault(); moveTabToLayer(tab, L); }
+      });
+      box.appendChild(b);
+    }
+  }
+
   function renderTabs() {
+    renderLayers();
     const nav = $('#tabs');
     nav.innerHTML = '';
-    cfg.tabs.forEach((tab, idx) => {
+    const L = currentLayer();
+    const list = M.tabsOfLayer(cfg.tabs, L);
+    list.forEach((tab, pos) => {
       const isActive = tab.id === cfg.activeTabId;
+      const keyHint = pos < 10 ? '  (Strg+' + ((pos + 1) % 10) + ')' : '';
       const b = h('button', {
         class: 'tab' + (isActive ? ' active' : ''),
         style: { '--tabc': tab.color, '--tabfg': contrast(tab.color) },
-        title: tab.name + (idx < 9 ? '  (Strg+' + (idx + 1) + ')' : ''),
-        draggable: editMode ? 'true' : 'false'
+        title: tab.name + keyHint,
+        draggable: editMode ? 'true' : 'false',
+        dataset: { tabId: tab.id }
       },
-      tab.name,
+      h('span', { class: 'tab-label' }, tab.name),
       tabIsPlaying(tab) ? h('span', { class: 'dot' }) : null,
       editMode && isActive ? h('span', { class: 'edit-mark' }, '✎') : null);
 
@@ -263,15 +351,19 @@
       b.addEventListener('dblclick', () => { if (!editMode) return; openTabEditor(tab); });
       b.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        showMenu(e.clientX, e.clientY, tab.name, [
+        const items = [
           { icon: '✎', label: 'Reiter bearbeiten', fn: () => openTabEditor(tab) },
           { icon: '↺', label: 'Zähler dieses Reiters zurücksetzen', fn: () => resetCounters(tab) },
           { icon: '+', label: 'Neuer Reiter', fn: () => openTabEditor(null) }
-        ]);
+        ];
+        for (let k = 0; k < M.MAX_LAYERS; k++) {
+          if (k !== L) items.push({ icon: '⇅', label: 'Auf Ebene ' + (k + 1) + ' verschieben', fn: () => moveTabToLayer(tab, k) });
+        }
+        showMenu(e.clientX, e.clientY, tab.name, items);
       });
 
       // Reiter per Maus umsortieren / Kacheln & Dateien auf Reiter ziehen
-      b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/edj-tab', String(idx)); e.dataTransfer.effectAllowed = 'move'; });
+      b.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/edj-tab', tab.id); e.dataTransfer.effectAllowed = 'move'; });
       b.addEventListener('dragover', (e) => {
         const types = Array.from(e.dataTransfer.types);
         if (types.includes('text/edj-tab') || types.includes('text/edj-tile') || types.includes('Files')) {
@@ -283,12 +375,16 @@
       b.addEventListener('dragleave', () => b.classList.remove('drag-over'));
       b.addEventListener('drop', (e) => {
         b.classList.remove('drag-over');
-        const from = e.dataTransfer.getData('text/edj-tab');
+        const fromId = e.dataTransfer.getData('text/edj-tab');
         const tileId = e.dataTransfer.getData('text/edj-tile');
-        if (from !== '') {
+        if (fromId) {
           e.preventDefault();
-          const [moved] = cfg.tabs.splice(Number(from), 1);
-          cfg.tabs.splice(idx, 0, moved);
+          const moved = cfg.tabs.find((t) => t.id === fromId);
+          if (!moved || moved === tab) return;
+          if ((moved.layer || 0) !== L && list.length >= M.TABS_PER_LAYER) { toast('Ebene ' + (L + 1) + ' ist voll.', 'err'); return; }
+          cfg.tabs = cfg.tabs.filter((t) => t !== moved);
+          moved.layer = L;
+          cfg.tabs.splice(cfg.tabs.indexOf(tab), 0, moved);
           persist(); renderTabs();
         } else if (tileId) {
           e.preventDefault();
@@ -297,11 +393,51 @@
       });
       nav.appendChild(b);
     });
-    if (editMode) {
-      nav.appendChild(h('button', { class: 'tab add', title: 'Neuen Reiter anlegen', onclick: () => openTabEditor(null) }, '+'));
+    if (editMode && list.length < M.TABS_PER_LAYER && cfg.tabs.length < M.MAX_TABS) {
+      nav.appendChild(h('button', { class: 'tab add', title: 'Neuen Reiter auf Ebene ' + (L + 1) + ' anlegen', onclick: () => openTabEditor(null) }, '+'));
     }
-    const act = nav.querySelector('.tab.active');
-    if (act && act.scrollIntoView) act.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    fitTabLabels();
+  }
+
+  /**
+   * Reitertexte einpassen: einzeilig verkleinern (einzelne Wörter bis 10 px), sonst zweizeilig
+   * an Wortgrenzen und weiter verkleinern; nur wenn ein Wort selbst dann nicht passt, wird es getrennt.
+   */
+  function fitTabLabels() {
+    document.querySelectorAll('#tabs .tab-label').forEach((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      // einzeilig: echte Textbreite messen (Bruchteil-Pixel lösen sonst schon „…“ aus)
+      const fits = () => (el.classList.contains('two')
+        ? el.scrollWidth <= el.clientWidth && el.scrollHeight <= el.clientHeight + 1
+        : range.getBoundingClientRect().width <= el.getBoundingClientRect().width - 0.5);
+      const oneWord = !/\s/.test(el.textContent.trim());
+      el.classList.remove('two', 'brk');
+      let size = 17;
+      el.style.fontSize = size + 'px';
+      const minOne = oneWord ? 10 : 13;
+      while (!fits() && size > minOne) el.style.fontSize = --size + 'px';
+      if (fits() || oneWord) { if (!fits()) el.classList.add('brk'); return; }
+      el.classList.add('two');
+      size = 16;
+      el.style.fontSize = size + 'px';
+      while (!fits() && size > 10) el.style.fontSize = --size + 'px';
+      if (!fits()) el.classList.add('brk');
+    });
+  }
+
+  function onTabsResize() {
+    let raf = 0;
+    const ro = new ResizeObserver(() => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fitTabLabels); });
+    ro.observe($('#tabs'));
+  }
+
+  /** Reiter per Tastatur/Fernsteuerung: nächster/vorheriger über alle Ebenen */
+  function stepTab(dir) {
+    const order = orderedTabs();
+    const i = order.findIndex((t) => t.id === cfg.activeTabId);
+    const next = order[(i + dir + order.length) % order.length];
+    if (next) selectTab(next.id);
   }
 
   let tabSwitchTimer = null;
@@ -311,7 +447,9 @@
   }
 
   function selectTab(id) {
-    if (cfg.activeTabId === id) return;
+    const tab = cfg.tabs.find((t) => t.id === id);
+    if (tab) viewLayer = tab.layer || 0;
+    if (cfg.activeTabId === id) { renderTabs(); return; }
     cfg.activeTabId = id;
     persist();
     renderTabs();
@@ -554,29 +692,37 @@
   }
 
   function onVoiceChange() {
+    $('#btn-pause').classList.toggle('on', A.paused);
+    $('#btn-pause').textContent = A.paused ? '▶' : '❚❚';
+    if (cfg.settings.fxAutoReset && !A.voices.size && A.fxActive()) A.resetFx();
     publishState();
     updateTileStates();
     renderNowPlaying();
-    // Punkte an den Reitern aktualisieren
-    document.querySelectorAll('#tabs .tab').forEach((b, i) => {
-      const tab = cfg.tabs[i];
-      if (!tab) return;
-      const has = !!b.querySelector('.dot');
-      const should = tabIsPlaying(tab);
-      if (has !== should) renderTabs();
+    // Punkte an den Reitern und Ebenen aktualisieren
+    let dirty = false;
+    document.querySelectorAll('#tabs .tab[data-tab-id]').forEach((b) => {
+      const tab = cfg.tabs.find((t) => t.id === b.dataset.tabId);
+      if (tab && !!b.querySelector('.dot') !== tabIsPlaying(tab)) dirty = true;
     });
+    document.querySelectorAll('#layers .layer').forEach((b) => {
+      const playing = M.tabsOfLayer(cfg.tabs, Number(b.dataset.layer)).some(tabIsPlaying);
+      if (!!b.querySelector('.dot') !== playing) dirty = true;
+    });
+    if (dirty) renderTabs();
   }
 
   function updateTileStates() {
     tileEls.forEach((t, id) => {
       const vs = A.voicesForTile(id);
       const master = vs.filter((v) => v.bus === 'master');
-      const playing = master.some((v) => v.state !== 'fading');
-      const fading = !playing && master.some((v) => v.state === 'fading');
+      const paused = master.length > 0 && master.every((v) => v.paused);
+      const playing = !paused && master.some((v) => v.state !== 'fading');
+      const fading = !paused && !playing && master.some((v) => v.state === 'fading');
+      t.el.classList.toggle('paused', paused);
       t.el.classList.toggle('playing', playing);
       t.el.classList.toggle('fading', fading);
       t.el.classList.toggle('cueing', vs.some((v) => v.bus === 'cue'));
-      t.play.textContent = playing || fading ? '■' : '▶';
+      t.play.textContent = paused ? '❚❚' : playing || fading ? '■' : '▶';
       const pl = master.find((v) => v.tracks);
       t.track.textContent = pl && pl.trackTitle ? '♪ ' + pl.trackTitle : '';
       if (!master.length) {
@@ -594,7 +740,8 @@
     const to = v.endAt > 0 && full ? Math.min(v.endAt, full) : full;
     const dur = Math.max(0, to - from);
     const cur = Math.max(0, (a.currentTime || 0) - from);
-    return { dur, cur, pct: dur ? Math.min(1, cur / dur) : 0, rem: dur ? Math.max(0, dur - cur) : 0 };
+    const rate = a.playbackRate || 1;
+    return { dur, cur, pct: dur ? Math.min(1, cur / dur) : 0, rem: dur ? Math.max(0, dur - cur) / rate : 0 };
   }
 
   function updateProgress() {
@@ -630,12 +777,13 @@
       const bar = h('div', { class: 'np-bar' });
       const time = h('span', { class: 'np-time' }, '…');
       const el = h('div', {
-        class: 'np' + (v.state === 'fading' ? ' fading' : ''),
+        class: 'np' + (v.state === 'fading' ? ' fading' : '') + (v.paused ? ' paused' : ''),
         style: { '--npbg': look.bg, '--npfg': look.fg },
         title: found ? 'Reiter: ' + found.tab.name : ''
       },
       v.bus === 'cue' ? h('span', { class: 'np-bus' }, '🎧 Vorhören') : null,
       v.role === 'bed' ? h('span', { class: 'np-bus', title: 'Hintergrundmusik – wird bei Jingles abgesenkt' }, '▽ BG') : null,
+      v.paused ? h('span', { class: 'np-bus' }, '❚❚ Pause') : null,
       h('span', { class: 'np-title', onclick: () => found && selectTab(found.tab.id) }, v.title, v.trackTitle ? h('small', null, v.trackTitle) : null),
       time,
       v.tracks ? h('button', { title: 'Nächster Titel', onclick: () => A.next(v.tileId) }, '⏭') : null,
@@ -961,7 +1109,12 @@
 
   function openTabEditor(tab) {
     const isNew = !tab;
-    const draft = isNew ? M.newTab('Neuer Reiter', PALETTE[cfg.tabs.length % PALETTE.length], 4, 3) : JSON.parse(JSON.stringify(tab));
+    if (isNew && cfg.tabs.length >= M.MAX_TABS) { toast('Maximal ' + M.MAX_TABS + ' Reiter (3 Ebenen à ' + M.TABS_PER_LAYER + ').', 'err'); return; }
+    let newLayer = currentLayer();
+    if (isNew && M.tabsOfLayer(cfg.tabs, newLayer).length >= M.TABS_PER_LAYER) {
+      newLayer = [0, 1, 2].find((L) => M.tabsOfLayer(cfg.tabs, L).length < M.TABS_PER_LAYER);
+    }
+    const draft = isNew ? M.newTab('Neuer Reiter', PALETTE[cfg.tabs.length % PALETTE.length], 4, 3, newLayer) : JSON.parse(JSON.stringify(tab));
     const d = openDialog({ title: isNew ? 'Neuer Reiter' : 'Reiter bearbeiten', kind: 'tab' });
 
     const prev = h('div', { class: 'matrix-prev' });
@@ -989,12 +1142,14 @@
         overflowNote)
     ]);
     if (!isNew) {
-      const idx = cfg.tabs.findIndex((t) => t.id === tab.id);
+      const sib = M.tabsOfLayer(cfg.tabs, tab.layer || 0);
+      const pos = sib.indexOf(tab);
       append(d.body, h('div', { class: 'section' },
         h('h3', null, 'Position & Zähler'),
+        field('Reiter-Ebene', segmented([0, 1, 2].map((L) => [String(L), 'Ebene ' + (L + 1)]), String(tab.layer || 0), (v) => { d.close(); moveTabToLayer(tab, Number(v)); })),
         h('div', { class: 'row' },
-          h('button', { class: 'btn', disabled: idx === 0, onclick: () => { moveTab(idx, -1); d.close(); } }, '◀ Nach links'),
-          h('button', { class: 'btn', disabled: idx === cfg.tabs.length - 1, onclick: () => { moveTab(idx, 1); d.close(); } }, 'Nach rechts ▶'),
+          h('button', { class: 'btn', disabled: pos === 0, onclick: () => { moveTab(tab, -1); d.close(); } }, '◀ Nach links'),
+          h('button', { class: 'btn', disabled: pos === sib.length - 1, onclick: () => { moveTab(tab, 1); d.close(); } }, 'Nach rechts ▶'),
           h('button', { class: 'btn', onclick: () => { d.close(); resetCounters(tab); } }, '↺ Zähler dieses Reiters zurücksetzen'))));
     }
     drawPrev();
@@ -1009,7 +1164,11 @@
           if (!ok) return;
           tab.tiles.forEach((t) => A.stopTile(t.id, false));
           cfg.tabs = cfg.tabs.filter((t) => t.id !== tab.id);
-          if (cfg.activeTabId === tab.id) cfg.activeTabId = cfg.tabs[0].id;
+          if (cfg.activeTabId === tab.id) {
+            const same = M.tabsOfLayer(cfg.tabs, tab.layer || 0);
+            cfg.activeTabId = (same[0] || cfg.tabs[0]).id;
+            viewLayer = null;
+          }
           persist(); d.close(); renderAll();
         }
       }, 'Reiter löschen') : null,
@@ -1022,6 +1181,7 @@
           if (isNew) {
             cfg.tabs.push(M.normalizeTab(draft));
             cfg.activeTabId = draft.id;
+            viewLayer = draft.layer || 0;
           } else {
             Object.assign(tab, { name: draft.name, color: draft.color, cols: draft.cols, rows: draft.rows });
           }
@@ -1031,9 +1191,13 @@
     ]);
   }
 
-  function moveTab(idx, dir) {
-    const [t] = cfg.tabs.splice(idx, 1);
-    cfg.tabs.splice(idx + dir, 0, t);
+  /** Reiter innerhalb seiner Ebene nach links/rechts verschieben */
+  function moveTab(tab, dir) {
+    const sib = M.tabsOfLayer(cfg.tabs, tab.layer || 0);
+    const other = sib[sib.indexOf(tab) + dir];
+    if (!other) return;
+    const a = cfg.tabs.indexOf(tab), b = cfg.tabs.indexOf(other);
+    cfg.tabs[a] = other; cfg.tabs[b] = tab;
     persist();
     renderTabs();
   }
@@ -1657,6 +1821,48 @@
       h('tr', null, h('th', null, 'Taste'), h('th', null, 'MIDI'), h('th', null, 'Kachel'), h('th', null, 'Reiter')),
       rows.map((r) => h('tr', null, r.map((c) => h('td', null, c))))));
 
+    // --- Player-Tasten
+    const keysBox = h('div');
+    const drawKeys = () => {
+      keysBox.innerHTML = '';
+      keysBox.appendChild(h('table', { class: 'keys-table' }, M.PLAYER_ACTIONS.map((a) => {
+        const list = s.keys[a.id] || [];
+        const cap = (slot) => h('span', { class: 'key-cap' },
+          h('span', { class: 'learn-val' }, list[slot] ? keyLabel(list[slot]) : '—'),
+          h('button', { class: 'small-btn', onclick: (e) => learnPlayerKey(e.currentTarget, (key) => { assignPlayerKey(a.id, slot, key); drawKeys(); }) }, list[slot] ? 'Ändern' : 'Zuweisen'),
+          list[slot] ? h('button', { class: 'small-btn', title: 'Taste entfernen', onclick: () => { s.keys[a.id] = list.filter((_, i) => i !== slot); persist(); drawKeys(); } }, '✕') : null);
+        return h('tr', null,
+          h('td', null, a.label),
+          h('td', null, cap(0), list[0] ? cap(1) : null));
+      })));
+    };
+    drawKeys();
+
+    // --- Live-Effekte
+    const fxMidiBox = h('div');
+    const drawFxMidi = () => {
+      fxMidiBox.innerHTML = '';
+      M.FX_MODULES.forEach((k) => {
+        fxMidiBox.appendChild(field(FX_UI[k].name, h('div', { class: 'row', style: { marginBottom: '0' } },
+          h('span', { class: 'learn-val' }, s.fxMidi[k] ? midiLabel(s.fxMidi[k]) : '—'),
+          h('button', { class: 'small-btn', onclick: (e) => learnMidiCc(e.currentTarget, (id) => {
+            Object.keys(s.fxMidi).forEach((o) => { if (s.fxMidi[o] === id) delete s.fxMidi[o]; });
+            s.fxMidi[k] = id; persist(); drawFxMidi();
+          }) }, '♫ Regler zuweisen'),
+          s.fxMidi[k] ? h('button', { class: 'small-btn', onclick: () => { delete s.fxMidi[k]; persist(); drawFxMidi(); } }, 'Entfernen') : null)));
+      });
+    };
+    drawFxMidi();
+    const presetInp = h('input', {
+      class: 'inp', type: 'text', value: s.tempoPresets.map((r) => String(r).replace('.', ',')).join('  '),
+      onchange: () => {
+        const vals = presetInp.value.split(/[\s;/|]+/).map((x) => Number(x.replace(',', '.').replace(/[×x]/gi, ''))).filter((x) => x > 0);
+        s.tempoPresets = M.normalizePresets(vals);
+        presetInp.value = s.tempoPresets.map((r) => String(r).replace('.', ',')).join('  ');
+        persist();
+      }
+    });
+
     append(d.body, [
       h('div', { class: 'section' },
         h('h3', null, 'Audio-Ausgabe'),
@@ -1719,6 +1925,36 @@
             checkbox('Zähler-Reset bestätigen lassen', s.confirmReset, (v) => { s.confirmReset = v; persist(); })))),
 
       h('div', { class: 'section' },
+        h('h3', null, 'Tastenbelegung (Player)'),
+        h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Standard-Bedienung per Tastatur – je Aktion bis zu zwei Tasten. Diese Tasten haben Vorrang vor den Tastenkürzeln der Kacheln. Fest belegt: Strg+1…9/0 (Reiter der angezeigten Ebene), F11 (Vollbild). Esc schließt zuerst offene Dialoge.'),
+        keysBox,
+        h('div', { class: 'row', style: { marginTop: '10px' } },
+          h('button', { class: 'small-btn', onclick: async () => {
+            if (!(await confirmDialog('Tasten zurücksetzen?', 'Alle Player-Tasten werden auf die Standardbelegung zurückgesetzt (Enter = Stopp, Leertaste = Pause, Esc = Ausblenden …).', 'Zurücksetzen', false))) return;
+            s.keys = M.defaultKeys(); persist(); drawKeys();
+          } }, '⟲ Standardbelegung'))),
+
+      h('div', { class: 'section' },
+        h('h3', null, 'Live-Effekte'),
+        h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Die Effektleiste (Knopf „FX“ unten) wirkt live auf alles, was über den Master-Ausgang läuft – Vorhören bleibt unbeeinflusst. Wert antippen bzw. Regler doppelklicken = zurück auf neutral.'),
+        h('div', { class: 'grid2' },
+          h('div', null,
+            field('Regler in der Effektleiste', h('div', { class: 'fx-pick' }, M.FX_MODULES.map((k) =>
+              checkbox(FX_UI[k].name, s.fxModules.includes(k), (v) => {
+                s.fxModules = M.FX_MODULES.filter((m) => (m === k ? v : s.fxModules.includes(m)));
+                persist();
+              })))),
+            field('Tempo-Stufen (Knöpfe)', presetInp, 'Zahlen mit Leerzeichen getrennt, 0,25 bis 16 – z. B. „0,5 1 1,5 2 5 10“. 1× ist immer dabei.'),
+            checkbox('Tonhöhe beim Beschleunigen halten (bis 4×)', s.pitchLock, (v) => { s.pitchLock = v; A.setPitchLock(v); persist(); }),
+            h('p', { class: 'hint', style: { marginBottom: '14px' } }, 'Aus: klingt wie ein schneller laufendes Band („Mickymaus“) – funktioniert bei jedem Tempo. An: gleiche Tonhöhe, nur schneller; über 4× schaltet EventDJ automatisch auf Band-Modus.'),
+            field('Echo-Zeit', stepper({ value: s.echoMs, min: 50, max: 1500, step: 25, bigStep: 100, format: (v) => v + ' ms', onChange: (v) => { s.echoMs = v; A.setEchoTime(v); persist(); } })),
+            checkbox('Effekte automatisch zurücksetzen, wenn nichts mehr läuft', s.fxAutoReset, (v) => { s.fxAutoReset = v; persist(); })),
+          h('div', null,
+            h('h4', null, 'MIDI-Regler (Fader/Drehregler)'),
+            h('p', { class: 'hint', style: { marginBottom: '8px' } }, 'Jedem Effekt einen Fader oder Drehregler des MIDI-Controllers zuweisen – der Regler steuert den Effekt dann stufenlos.'),
+            fxMidiBox))),
+
+      h('div', { class: 'section' },
         h('h3', null, 'Fernsteuerung'),
         h('div', { class: 'grid2' },
           h('div', null,
@@ -1751,8 +1987,8 @@
       h('div', { class: 'section' },
         h('h3', null, 'Bedienung & Info'),
         h('p', { class: 'hint' },
-          'Tastatur: ', h('span', { class: 'kbd' }, 'Esc'), ' alles ausblenden · ', h('span', { class: 'kbd' }, 'Umschalt+Esc'), ' sofort stoppen · ',
-          h('span', { class: 'kbd' }, 'Strg+1…9'), ' Reiter wechseln · ', h('span', { class: 'kbd' }, 'Strg+E'), ' Bearbeiten · ', h('span', { class: 'kbd' }, 'F11'), ' Vollbild · eigene Tastenkürzel pro Kachel (Kachel-Dialog → Steuerung)'),
+          'Tastatur: ', h('span', { class: 'kbd' }, keysOf('stopAll') || '–'), ' sofort stoppen · ', h('span', { class: 'kbd' }, keysOf('pause') || '–'), ' Pause · ',
+          h('span', { class: 'kbd' }, keysOf('fadeAll') || '–'), ' ausblenden · ', h('span', { class: 'kbd' }, 'Strg+1…9/0'), ' Reiter der Ebene · ', h('span', { class: 'kbd' }, 'F11'), ' Vollbild · alle Player-Tasten unter „Tasten“, eigene Tastenkürzel pro Kachel im Kachel-Dialog → Steuerung'),
         h('p', { class: 'hint' }, 'EventDJ ' + (info.version || '') + (info.electron ? ' · Electron ' + info.electron : '') + ' · ',
           h('a', { href: '#', style: { color: 'var(--accent)' }, onclick: (e) => { e.preventDefault(); api.openUrl('https://github.com/stadtkindd/EventDJsw'); } }, 'github.com/stadtkindd/EventDJsw')))
     ]);
@@ -1761,17 +1997,19 @@
     const PAGE_OF = {
       'Audio-Ausgabe': 'audio', 'Lautheit & Pegelanzeige': 'audio',
       'Wiedergabe': 'play', 'Hintergrundmusik & Ducking': 'play',
+      'Tastenbelegung (Player)': 'keys', 'Live-Effekte': 'fx',
       'Kachel-Stile (Eigenschaften)': 'look', 'Darstellung': 'look',
       'Fernsteuerung': 'remote',
       'Daten & Sicherung': 'data', 'Bedienung & Info': 'data'
     };
     const sections = Array.from(d.body.querySelectorAll(':scope > .section'));
     const showSettingsPage = (pg) => sections.forEach((sec) => { sec.hidden = PAGE_OF[sec.querySelector('h3').textContent] !== pg; });
-    const navEl = segmented([['audio', 'Audio'], ['play', 'Wiedergabe'], ['look', 'Aussehen'], ['remote', 'Fernsteuerung'], ['data', 'Daten & Info']], 'audio', showSettingsPage);
+    const PAGES = [['audio', 'Audio'], ['play', 'Wiedergabe'], ['keys', 'Tasten'], ['fx', 'Effekte'], ['look', 'Aussehen'], ['remote', 'Fernsteuerung'], ['data', 'Daten & Info']];
+    const navEl = segmented(PAGES, 'audio', showSettingsPage);
     navEl.classList.add('page-nav');
     d.body.insertBefore(navEl, d.body.firstChild);
     showSettingsPage(opts && opts.page || 'audio');
-    if (opts && opts.page) navEl.querySelectorAll('button').forEach((b, i) => b.classList.toggle('sel', ['audio', 'play', 'look', 'remote', 'data'][i] === opts.page));
+    if (opts && opts.page) navEl.querySelectorAll('button').forEach((b, i) => b.classList.toggle('sel', PAGES[i][0] === opts.page));
 
     append(d.foot, [h('div', { class: 'spacer' }), h('button', { class: 'btn primary', onclick: () => d.close() }, 'Fertig')]);
   }
@@ -1811,7 +2049,6 @@
 
   // ================================================================ Fernsteuerung: Tastatur, MIDI, HTTP
 
-  const RESERVED_KEYS = ['Escape', 'Shift+Escape', 'F11', 'F12', 'Ctrl+E', 'Ctrl+R'].concat([1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => 'Ctrl+' + n));
 
   /** Tastenkombination als Text, z. B. "F1", "Q", "Num5", "Ctrl+Shift+A" */
   function hotkeyFromEvent(e) {
@@ -1819,6 +2056,7 @@
     let key;
     if (/^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
     else if (/^Digit\d$/.test(e.code)) key = e.code.slice(5);
+    else if (e.code === 'NumpadEnter') key = 'Enter';
     else if (/^Numpad/.test(e.code)) key = 'Num' + e.code.slice(6);
     else if (e.code === 'Space') key = 'Space';
     else if (/^F\d{1,2}$/.test(e.key)) key = e.key;
@@ -1853,10 +2091,12 @@
     const keyHandler = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === 'Escape') { cancelLearn(); return; }
+      if (e.key === 'Escape' && !e.shiftKey) { cancelLearn(); return; }
       const key = hotkeyFromEvent(e);
       if (!key) return;
-      if (RESERVED_KEYS.includes(key)) { toast(key + ' ist für EventDJ reserviert – bitte eine andere Taste wählen.', 'err'); return; }
+      if (FIXED_KEYS.includes(key)) { toast(key + ' ist für EventDJ reserviert – bitte eine andere Taste wählen.', 'err'); return; }
+      const act = actionForKey(key);
+      if (act) { toast(key + ' ist dem Player zugewiesen („' + actionLabel(act) + '“). Änderbar unter Einstellungen → Tasten.', 'err', 5000); return; }
       cancelLearn();
       done(key);
     };
@@ -1911,6 +2151,12 @@
   function onMidiMessage(e) {
     const [status, d1, d2] = e.data;
     const type = status & 0xf0, ch = (status & 0x0f) + 1;
+    if (type === 0xb0) {
+      const cc = 'cc:' + ch + ':' + d1;
+      if (learnState && learnState.ccDone) { const done = learnState.ccDone; cancelLearn(); done(cc); return; }
+      const fxName = cfg.settings.midiEnabled && Object.keys(cfg.settings.fxMidi).find((k) => cfg.settings.fxMidi[k] === cc);
+      if (fxName) { fxFromMidi(fxName, d2); return; }
+    }
     let id = null;
     if (type === 0x90 && d2 > 0) id = 'note:' + ch + ':' + d1;
     else if (type === 0xb0) {
@@ -1930,6 +2176,12 @@
     if (id === cfg.settings.midiStop) { A.stopAll(false); return; }
     if (id === cfg.settings.midiFade) { A.stopAll(true); return; }
     for (const tab of cfg.tabs) for (const t of tab.tiles) if (t.midi === id) { triggerTile(t, 'master'); return; }
+  }
+
+  /** MIDI-Regler (CC) für einen Effekt lernen – jede Bewegung zählt */
+  function learnMidiCc(btn, done) {
+    learnMidi(btn, done);
+    if (learnState) { learnState.ccDone = done; learnState.btn.textContent = 'Regler/Fader am MIDI-Gerät bewegen … (Esc = abbrechen)'; }
   }
 
   function learnMidi(btn, done) {
@@ -1967,15 +2219,17 @@
       const playing = [];
       A.voices.forEach((v) => { if (v.bus === 'master' && !playing.includes(v.tileId)) playing.push(v.tileId); });
       api.remoteState({
-        activeTab: cfg.tabs.findIndex((t) => t.id === cfg.activeTabId) + 1,
-        tabs: cfg.tabs.map((t) => ({
-          id: t.id, name: t.name, color: t.color,
+        activeTab: orderedTabs().findIndex((t) => t.id === cfg.activeTabId) + 1,
+        tabs: orderedTabs().map((t) => ({
+          id: t.id, name: t.name, color: t.color, layer: (t.layer || 0) + 1,
           tiles: t.tiles.slice().sort((a, b) => a.slot - b.slot).map((x) => {
             const look = M.resolveLook(cfg, x);
             return { id: x.id, title: x.title, bg: look.bg, fg: look.fg, hotkey: x.hotkey, playCount: x.playCount, kind: x.kind };
           })
         })),
-        playing
+        playing,
+        paused: A.paused,
+        fx: Object.assign({}, A.fx)
       });
     }, 80);
   }
@@ -1990,9 +2244,216 @@
       case 'key': { const t = findTileByHotkey(c.key); if (t) triggerTile(t, 'master'); break; }
       case 'fade': A.stopAll(true); break;
       case 'stopall': A.stopAll(false); break;
-      case 'tab': if (cfg.tabs[c.index]) selectTab(cfg.tabs[c.index].id); break;
+      case 'tab': { const t = orderedTabs()[c.index]; if (t) selectTab(t.id); break; }
       case 'reset': M.resetCounters(cfg); persist(); renderGrid(); toast('Zähler per Fernsteuerung zurückgesetzt.', 'ok'); break;
+      case 'pause': if (A.voices.size) A.togglePause(); break;
+      case 'tempo': A.setFx('tempo', c.value); break;
+      case 'fx': A.setFx(c.name, c.value); break;
+      case 'fxreset': A.resetFx(); break;
     }
+  }
+
+  // ================================================================ Live-Effekte
+
+  const numDe = (v, d) => v.toFixed(d).replace('.', ',');
+  const fmtRate = (r) => (Math.abs(r - Math.round(r)) < 0.005 ? String(Math.round(r)) : numDe(r, r < 1 ? 2 : 1).replace(/0$/, '')) + '×';
+  const signed = (v, d, unit) => (v > 0 ? '+' : v < 0 ? '−' : '') + numDe(Math.abs(v), d) + unit;
+
+  // Tempo-Regler: logarithmisch 0,25× … 16× (Reglerposition 0 … 1000), 1× genau in der Mitte des unteren Bereichs
+  const TEMPO_MIN = 0.25, TEMPO_MAX = 16;
+  const tempoToPos = (r) => Math.round((Math.log(r / TEMPO_MIN) / Math.log(TEMPO_MAX / TEMPO_MIN)) * 1000);
+  const posToTempo = (p) => {
+    let r = TEMPO_MIN * Math.pow(TEMPO_MAX / TEMPO_MIN, p / 1000);
+    // in der Nähe der Stufen einrasten
+    const snap = cfg.settings.tempoPresets.concat([0.5, 1.5]).find((x) => Math.abs(Math.log(r / x)) < 0.035);
+    if (snap) r = snap;
+    return Math.round(r * 100) / 100;
+  };
+
+  const FX_UI = {
+    tempo: { name: 'Tempo', hint: 'Geschwindigkeit der laufenden Titel' },
+    bass: { name: 'Bass', min: -12, max: 15, step: 0.5, fmt: (v) => (v ? signed(v, 1, ' dB') : '0 dB') },
+    treble: { name: 'Höhen', min: -12, max: 12, step: 0.5, fmt: (v) => (v ? signed(v, 1, ' dB') : '0 dB') },
+    filter: { name: 'Filter', min: -100, max: 100, step: 1, fmt: (v) => (v === 0 ? 'aus' : v < 0 ? 'dumpf ' + -v + '%' : 'dünn ' + v + '%'), hint: 'links: dumpf (Tiefpass) · rechts: dünn wie Telefon (Hochpass)' },
+    hall: { name: 'Hall', min: 0, max: 100, step: 1, fmt: (v) => (v ? v + ' %' : 'aus') },
+    echo: { name: 'Echo', min: 0, max: 100, step: 1, fmt: (v) => (v ? v + ' %' : 'aus') }
+  };
+
+  let fxEls = {};
+
+  function renderFxBar() {
+    const bar = $('#fxbar');
+    const s = cfg.settings;
+    bar.hidden = !s.fxBarOpen;
+    $('#btn-fx').classList.toggle('on', s.fxBarOpen);
+    bar.innerHTML = '';
+    fxEls = {};
+    const mods = s.fxModules;
+    if (!mods.length) bar.appendChild(h('div', { class: 'fx-empty' }, 'Keine Effekte ausgewählt – unter ⚙ Einstellungen → Effekte festlegen.'));
+    mods.forEach((name) => {
+      const ui = FX_UI[name];
+      const val = h('button', { class: 'fx-val', title: 'Zurücksetzen' , onclick: () => A.setFx(name, A.fxDefs[name].neutral) });
+      const slider = name === 'tempo'
+        ? h('input', { type: 'range', min: '0', max: '1000', step: '1', 'aria-label': ui.name })
+        : h('input', { type: 'range', min: String(ui.min), max: String(ui.max), step: String(ui.step), 'aria-label': ui.name });
+      slider.addEventListener('input', () => A.setFx(name, name === 'tempo' ? posToTempo(Number(slider.value)) : Number(slider.value)));
+      slider.addEventListener('dblclick', () => A.setFx(name, A.fxDefs[name].neutral));
+      const box = h('div', { class: 'fx ' + name, title: ui.hint || '' },
+        h('div', { class: 'fx-head' }, h('span', { class: 'fx-name' }, ui.name), val),
+        slider);
+      let presets = null;
+      if (name === 'tempo') {
+        presets = h('div', { class: 'fx-presets' }, s.tempoPresets.map((r) =>
+          h('button', { dataset: { rate: String(r) }, onclick: () => A.setFx('tempo', r) }, fmtRate(r))));
+        box.appendChild(presets);
+      }
+      bar.appendChild(box);
+      fxEls[name] = { box, val, slider, presets };
+    });
+    bar.appendChild(h('div', { class: 'fx-side' },
+      h('button', { class: 'danger', title: 'Alle Effekte auf neutral', onclick: () => A.resetFx() }, '⟲ Alle aus'),
+      h('button', { title: 'Effektleiste einrichten', onclick: () => openSettings({ page: 'fx' }) }, '⚙ Einrichten')));
+    updateFxBar();
+  }
+
+  function updateFxBar() {
+    Object.keys(fxEls).forEach((name) => {
+      const e = fxEls[name];
+      const v = A.fx[name];
+      const changed = Math.abs(v - A.fxDefs[name].neutral) > 1e-6;
+      e.box.classList.toggle('changed', changed);
+      if (name === 'tempo') {
+        e.val.textContent = fmtRate(v);
+        if (document.activeElement !== e.slider) e.slider.value = String(tempoToPos(v));
+        e.presets.querySelectorAll('button').forEach((b) => b.classList.toggle('sel', Math.abs(Number(b.dataset.rate) - v) < 0.005));
+      } else {
+        e.val.textContent = FX_UI[name].fmt(v);
+        if (document.activeElement !== e.slider) e.slider.value = String(v);
+      }
+    });
+    $('#btn-fx').classList.toggle('active', A.fxActive());
+    $('#btn-fx').title = 'Live-Effekte ein-/ausblenden' + (A.fxActive() ? ' – Effekte aktiv!' : '');
+  }
+
+  function toggleFxBar(open) {
+    cfg.settings.fxBarOpen = open == null ? !cfg.settings.fxBarOpen : !!open;
+    persist();
+    renderFxBar();
+  }
+
+  /** Tempo eine Stufe hoch/runter (Stufen aus den Einstellungen) */
+  function tempoStep(dir) {
+    const list = cfg.settings.tempoPresets;
+    const cur = A.fx.tempo;
+    const next = dir > 0 ? list.find((r) => r > cur + 0.005) : list.slice().reverse().find((r) => r < cur - 0.005);
+    if (next != null) A.setFx('tempo', next);
+    toast('Tempo ' + fmtRate(A.fx.tempo), '', 1200);
+  }
+
+  /** MIDI-Regler (CC 0…127) auf einen Effekt abbilden */
+  function fxFromMidi(name, value) {
+    const x = value / 127;
+    if (name === 'tempo') { A.setFx('tempo', posToTempo(x * 1000)); return; }
+    const d = A.fxDefs[name];
+    let v = d.min + x * (d.max - d.min);
+    // Mittelstellung bei Reglern mit Null in der Mitte einrasten lassen
+    if (d.min < 0 && Math.abs(v) < (d.max - d.min) * 0.03) v = 0;
+    A.setFx(name, Math.round(v / FX_UI[name].step) * FX_UI[name].step);
+  }
+
+  // ================================================================ Player-Aktionen (Tastatur)
+
+  const FIXED_KEYS = ['F11', 'F12', 'Ctrl+R'].concat([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => 'Ctrl+' + n));
+
+  function actionForKey(key) {
+    if (!key) return null;
+    const k = String(key).toLowerCase();
+    const map = cfg.settings.keys;
+    const a = M.PLAYER_ACTIONS.find((x) => (map[x.id] || []).some((y) => y.toLowerCase() === k));
+    return a ? a.id : null;
+  }
+
+  function actionLabel(id) { const a = M.PLAYER_ACTIONS.find((x) => x.id === id); return a ? a.label : id; }
+
+  /** Taste deutsch beschriften (Speicherung bleibt englisch, z. B. "Ctrl+Space") */
+  const KEY_NAMES = { Ctrl: 'Strg', Shift: 'Umschalt', Space: 'Leertaste', Escape: 'Esc', PageDown: 'Bild↓', PageUp: 'Bild↑',
+    Backspace: 'Rücktaste', Delete: 'Entf', Insert: 'Einfg', NumAdd: 'Num +', NumSubtract: 'Num −', NumMultiply: 'Num ×', NumDivide: 'Num ÷',
+    ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Home: 'Pos1', End: 'Ende' };
+  function keyLabel(k) {
+    const parts = String(k || '').split('+');
+    if (parts.length > 1 && parts[parts.length - 1] === '') { parts.pop(); parts[parts.length - 1] = '+'; } // Taste „+“
+    return parts.map((p) => KEY_NAMES[p] || p).join('+');
+  }
+
+  function keysOf(id) { return (cfg.settings.keys[id] || []).map(keyLabel).join(' / '); }
+
+  function togglePause() {
+    if (!A.voices.size) return;
+    const p = A.togglePause();
+    toast(p ? 'Pause – nochmal drücken setzt fort.' : 'Weiter.', '', 1200);
+  }
+
+  function runAction(id) {
+    switch (id) {
+      case 'stopAll': A.stopAll(false); break;
+      case 'pause': togglePause(); break;
+      case 'fadeAll': A.stopAll(true); break;
+      case 'nextTrack': {
+        const done = new Set();
+        A.voices.forEach((v) => { if (v.bus === 'master' && v.tracks && !done.has(v.tileId)) { done.add(v.tileId); A.next(v.tileId); } });
+        break;
+      }
+      case 'nextTab': stepTab(1); break;
+      case 'prevTab': stepTab(-1); break;
+      case 'nextLayer': stepLayer(1); break;
+      case 'prevLayer': stepLayer(-1); break;
+      case 'fxBar': toggleFxBar(); break;
+      case 'fxReset': A.resetFx(); toast('Alle Effekte zurückgesetzt.', '', 1200); break;
+      case 'tempoUp': tempoStep(1); break;
+      case 'tempoDown': tempoStep(-1); break;
+      case 'tempoReset': A.setFx('tempo', 1); toast('Tempo 1×', '', 1000); break;
+      case 'edit': editMode = !editMode; moveTileId = null; renderAll(); break;
+      case 'reset': resetCounters(null); break;
+    }
+  }
+
+  /** Taste für eine Player-Aktion lernen */
+  function learnPlayerKey(btn, done) {
+    cancelLearn();
+    const label = btn.textContent;
+    btn.classList.add('learning');
+    btn.textContent = 'Taste drücken … (Esc = abbrechen)';
+    const keyHandler = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === 'Escape' && !e.shiftKey && !e.ctrlKey && !e.altKey) { cancelLearn(); return; }
+      const key = hotkeyFromEvent(e);
+      if (!key) return;
+      if (FIXED_KEYS.includes(key)) { toast(key + ' ist fest belegt (Vollbild, Reiter Strg+0…9) – bitte eine andere Taste wählen.', 'err'); return; }
+      cancelLearn();
+      done(key);
+    };
+    learnState = { btn, label, keyHandler };
+    document.addEventListener('keydown', keyHandler, true);
+  }
+
+  /** Taste einer Aktion zuweisen; Konflikte mit anderen Aktionen/Kacheln werden aufgelöst */
+  function assignPlayerKey(actionId, slot, key) {
+    const map = cfg.settings.keys;
+    const low = key.toLowerCase();
+    M.PLAYER_ACTIONS.forEach((a) => {
+      if (a.id !== actionId && (map[a.id] || []).some((x) => x.toLowerCase() === low)) {
+        map[a.id] = map[a.id].filter((x) => x.toLowerCase() !== low);
+        toast(keyLabel(key) + ' war „' + a.label + '“ zugewiesen – dort entfernt.', '', 3500);
+      }
+    });
+    cfg.tabs.forEach((t) => t.tiles.forEach((x) => {
+      if (x.hotkey && x.hotkey.toLowerCase() === low) { x.hotkey = ''; toast(keyLabel(key) + ' war der Kachel „' + x.title + '“ zugewiesen – dort entfernt.', '', 3500); }
+    }));
+    const list = (map[actionId] || []).filter((x) => x.toLowerCase() !== low);
+    list[slot] = key;
+    map[actionId] = list.filter(Boolean).slice(0, 2);
+    persist();
   }
 
   // ================================================================ Pegelanzeige
@@ -2070,6 +2531,13 @@
     });
     $('#btn-fadeall').addEventListener('click', () => A.stopAll(true));
     $('#btn-stopall').addEventListener('click', () => A.stopAll(false));
+    $('#btn-pause').addEventListener('click', togglePause);
+    $('#btn-fx').addEventListener('click', () => toggleFxBar());
+    // Fokus nicht auf Knöpfen stehen lassen – sonst lösen Leertaste/Enter den zuletzt geklickten Knopf aus
+    document.addEventListener('pointerup', (e) => {
+      const b = e.target.closest && e.target.closest('button, input[type=range]');
+      if (b && !b.closest('.overlay')) setTimeout(() => b.blur(), 0);
+    });
   }
 
   function bindDragDrop() {
@@ -2117,30 +2585,41 @@
   }
 
   function bindKeys() {
+    const isTyping = (e) => /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') && !['range', 'checkbox', 'radio', 'color'].includes(e.target.type);
     document.addEventListener('keydown', (e) => {
-      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || '') && e.target.type !== 'range' && e.target.type !== 'checkbox';
-      if (e.key === 'Escape') {
-        if (document.querySelector('.menu')) { closeMenus(); return; }
+      if (e.key === 'Escape' && !e.shiftKey) {
+        if (document.querySelector('.menu')) { closeMenus(); e.preventDefault(); return; }
         const top = topDialog();
-        if (top) { top._close(); return; }
-        if (moveTileId) { moveTileId = null; renderAll(); return; }
-        A.stopAll(!e.shiftKey);
+        if (top) { top._close(); e.preventDefault(); return; }
+        if (moveTileId) { moveTileId = null; renderAll(); e.preventDefault(); return; }
+      }
+      if (isTyping(e) || topDialog()) return;
+      const key = hotkeyFromEvent(e);
+      // Strg+1…9, Strg+0: Reiter der angezeigten Ebene
+      if (e.ctrlKey && !e.altKey && !e.shiftKey && /^Digit\d$/.test(e.code)) {
+        const n = Number(e.code.slice(5));
+        const tab = M.tabsOfLayer(cfg.tabs, currentLayer())[(n + 9) % 10];
+        if (tab) selectTab(tab.id);
         e.preventDefault();
         return;
       }
-      if (typing || topDialog()) return;
-      if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
-        const tab = cfg.tabs[Number(e.key) - 1];
-        if (tab) selectTab(tab.id);
+      const act = actionForKey(key);
+      if (act) {
         e.preventDefault();
-      } else if (e.ctrlKey && e.key.toLowerCase() === 'e') {
-        editMode = !editMode; moveTileId = null; renderAll();
-        e.preventDefault();
-      } else if (!editMode && !e.repeat) {
+        if (e.repeat && !['tempoUp', 'tempoDown', 'nextTab', 'prevTab'].includes(act)) return;
+        runAction(act);
+        return;
+      }
+      if (!editMode && !e.repeat) {
         // Tastenkürzel der Kacheln (gelten in allen Reitern)
-        const tile = findTileByHotkey(hotkeyFromEvent(e));
+        const tile = findTileByHotkey(key);
         if (tile) { e.preventDefault(); triggerTile(tile, 'master'); }
       }
+    });
+    // Leertaste/Enter lösen sonst beim Loslassen einen fokussierten Knopf aus
+    document.addEventListener('keyup', (e) => {
+      if (isTyping(e) || topDialog()) return;
+      if (actionForKey(hotkeyFromEvent(e))) e.preventDefault();
     });
     // Kein Kontextmenü des Browsers
     document.addEventListener('contextmenu', (e) => {

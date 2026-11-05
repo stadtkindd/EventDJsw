@@ -100,4 +100,33 @@ test('Neue Einstellungen mit Standardwerten', () => {
   assert.strictEqual(c.settings.httpEnabled, false);
 });
 
+test('Reiter-Ebenen: alte Konfiguration wird auf Ebenen à 10 verteilt', () => {
+  const tabs = Array.from({ length: 23 }, (_, i) => ({ name: 'R' + i }));
+  const c = M.normalizeConfig({ tabs });
+  assert.deepStrictEqual([0, 1, 2].map((L) => M.tabsOfLayer(c.tabs, L).length), [10, 10, 3]);
+  assert.strictEqual(M.layerCount(c.tabs), 3);
+});
+
+test('Reiter-Ebenen: volle Ebene läuft in die nächste über', () => {
+  const tabs = Array.from({ length: 12 }, (_, i) => ({ name: 'R' + i, layer: 0 }));
+  const c = M.normalizeConfig({ tabs });
+  assert.strictEqual(M.tabsOfLayer(c.tabs, 0).length, 10);
+  assert.strictEqual(M.tabsOfLayer(c.tabs, 1).length, 2);
+});
+
+test('Player-Tasten: Standard und Reparatur', () => {
+  const c = M.normalizeConfig({ settings: { keys: { pause: ['F5'], stopAll: 'kaputt' } } });
+  assert.deepStrictEqual(c.settings.keys.pause, ['F5']);
+  assert.deepStrictEqual(c.settings.keys.stopAll, ['Enter', 'Shift+Escape']);
+  assert.ok(M.PLAYER_ACTIONS.every((a) => Array.isArray(c.settings.keys[a.id])));
+});
+
+test('Tempo-Stufen werden bereinigt, 1× ist immer dabei', () => {
+  assert.deepStrictEqual(M.normalizePresets([10, 2, 2, 99, 'x', 5]), [1, 2, 5, 10]);
+  assert.deepStrictEqual(M.normalizePresets([0.5, 1.5]), [0.5, 1, 1.5]);
+  const c = M.normalizeConfig({ settings: { fxModules: ['bass', 'quatsch', 'bass', 'tempo'], fxMidi: { bass: 'cc:1:7', hall: 'note:1:3' } } });
+  assert.deepStrictEqual(c.settings.fxModules, ['bass', 'tempo']);
+  assert.deepStrictEqual(c.settings.fxMidi, { bass: 'cc:1:7' });
+});
+
 console.log('\n' + n + ' Tests bestanden.');

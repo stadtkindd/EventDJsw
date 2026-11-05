@@ -4,7 +4,7 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│ EventDJ │ Reiter 1 │ Reiter 2 │ Reiter 3 │   ↺ Neues Spiel ✎ ⚙ ⛶      │  ← Kopfzeile
+│ E │1 2 3│ Reiter 1 │ Reiter 2 │ Reiter 3 │ … (10)│  ↺ ✎ ⚙ ⛶         │  ← Kopfzeile
 ├──────────────────────────────────────────────────────────────────────┤
 │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                         │
 │  │3× STIL │ │0×      │ │        │ │        │                         │  ← Kachel-Matrix
@@ -12,13 +12,15 @@
 │  │▶  0:12 │ │▶  0:05 │ │        │ │        │                         │     pro Reiter)
 │  └────────┘ └────────┘ └────────┘ └────────┘                         │
 ├──────────────────────────────────────────────────────────────────────┤
-│ ▶ läuft gerade …  −0:08 ■ │ 🔊 Ausgang │ Master ━━━● │ Ausblenden │ STOP │  ← Fußzeile
+│ Tempo 1× 2× 5× 10× │ Bass │ Höhen │ Filter │ Hall │ Echo │ ⟲ Alle aus  │  ← Effektleiste (FX)
+├──────────────────────────────────────────────────────────────────────┤
+│ ▶ läuft …  −0:08 ■ │ Master ━━━● │ FX │ ❚❚ │ Ausblenden │ STOP        │  ← Fußzeile
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Kachel** – oben links der **Zähler** (wie oft gespielt), daneben der Name der **Eigenschaft/Stil**, in der Mitte der **Titel**, unten der **Play-Button** und die **Länge** bzw. während der Wiedergabe die **Restzeit**. Eine laufende Kachel leuchtet weiß und zeigt einen Fortschrittsbalken; ausblendende Kacheln werden etwas blasser. Graue Kacheln mit „Datei fehlt“ verweisen auf eine Audiodatei, die nicht mehr gefunden wird.
 
-**Fußzeile** – alle gerade laufenden Jingles mit Restzeit und eigenem Stopp-Button (ein Tipp = ausblenden, nochmal = sofort aus), die aktuellen Ausgabegeräte, der Master-Lautstärkeregler, **Ausblenden** (alles mit Fade-Out) und **STOP** (sofort alles aus).
+**Fußzeile** – alle gerade laufenden Jingles mit Restzeit und eigenem Stopp-Button (ein Tipp = ausblenden, nochmal = sofort aus), die aktuellen Ausgabegeräte, der Master-Lautstärkeregler, **FX** (Effektleiste ein/aus – leuchtet orange umrandet, solange ein Effekt aktiv ist), **❚❚ Pause**, **Ausblenden** (alles mit Fade-Out) und **STOP** (sofort alles aus).
 
 ## 2. Live-Modus und Bearbeitungsmodus
 
@@ -45,7 +47,13 @@ Im Dialog **Reiter bearbeiten**:
 - **Zähler dieses Reiters zurücksetzen**
 - **Reiter löschen** (der letzte Reiter bleibt immer erhalten)
 
-Rechtsklick auf einen Reiter öffnet ein Schnellmenü. Mit `Strg+1` … `Strg+9` springst du direkt zu einem Reiter. Ein grüner Punkt am Reiter zeigt, dass dort gerade etwas läuft.
+Rechtsklick auf einen Reiter öffnet ein Schnellmenü. Ein grüner Punkt am Reiter zeigt, dass dort gerade etwas läuft.
+
+**Gleich breite Reiter:** Die Reiterleiste hat immer 10 gleich breite Plätze – es entsteht nie ein Scrollbalken. Lange Namen werden automatisch kleiner und bei Bedarf zweizeilig dargestellt.
+
+**Reiter-Ebenen (bis zu 3 Leisten):** Links neben den Reitern schaltet **1 · 2 · 3** zwischen bis zu drei Reiterleisten um – zusammen also bis zu 30 Reiter. Die Ebene mit dem gerade aktiven Reiter ist unterstrichen, ein grüner Punkt zeigt, dass auf dieser Ebene etwas läuft. Leere Ebenen sind nur im Bearbeitungsmodus wählbar (zum Anlegen neuer Reiter). Einen Reiter verschiebst du auf eine andere Ebene über *Reiter bearbeiten → Reiter-Ebene*, per Rechtsklick → *Auf Ebene … verschieben* oder indem du ihn mit der Maus auf die Ebenen-Taste ziehst.
+
+`Strg+1` … `Strg+9` und `Strg+0` springen zum 1.–10. Reiter der angezeigten Ebene, `Bild↑`/`Bild↓` blättern durch alle Reiter, `Strg+Bild↑`/`Strg+Bild↓` wechseln die Ebene.
 
 ## 4. Jingles hinzufügen
 
@@ -193,20 +201,55 @@ Wie stark und wie schnell abgesenkt wird, stellst du unter *Einstellungen → Wi
 | `/api/fade` · `/api/stopall` | alles ausblenden · sofort alles stoppen |
 | `/api/tab/2` | zu Reiter 2 wechseln |
 | `/api/reset` | alle Zähler zurücksetzen |
+| `/api/pause` | Pause / Weiter |
+| `/api/tempo/<faktor>` | Tempo setzen, z. B. `/api/tempo/2` oder `/api/tempo/0.5` |
+| `/api/fx/<name>/<wert>` | Effekt setzen: `bass`, `treble` (dB), `filter` (−100…100), `hall`, `echo` (0…100) |
+| `/api/fxreset` | alle Effekte zurücksetzen |
 | `/api/state` | Reiter, Kacheln und laufende Jingles als JSON |
 
 **Tablet/Handy als Fernbedienung:** zusätzlich *Auch im Netzwerk erreichbar* einschalten und auf dem Tablet die angezeigte Adresse (z. B. `http://192.168.1.20:8765/`) im Browser öffnen – dort erscheinen alle Reiter und Kacheln als Buttons. Windows fragt beim ersten Mal ggf. nach einer Firewall-Freigabe. Nur in vertrauenswürdigen Netzwerken verwenden (kein Passwortschutz).
 
-## 15. Tastenkürzel
+## 15. Tastenkürzel (Player-Tasten)
 
-| Taste | Funktion |
+Unter **⚙ Einstellungen → Tasten** legst du für jede Player-Aktion bis zu zwei Tasten fest (**Zuweisen/Ändern** → Taste drücken). Eine Taste kann nur einmal vergeben werden – wird sie neu zugewiesen, verschwindet sie automatisch bei der alten Aktion bzw. Kachel. **⟲ Standardbelegung** stellt alles wieder her.
+
+| Standardtaste | Funktion |
 |---|---|
-| `Esc` | alles ausblenden (bzw. Dialog/Menü schließen) |
-| `Umschalt+Esc` | sofort alles stoppen |
-| `Strg+1` … `Strg+9` | Reiter 1–9 |
+| `Enter` (auch Ziffernblock) · `Umschalt+Esc` | **sofort alles stoppen** |
+| `Leertaste` | **Pause / Weiter** |
+| `Esc` | alles ausblenden (schließt zuerst offene Dialoge/Menüs) |
+| `Bild↓` / `Bild↑` | nächster / vorheriger Reiter |
+| `Strg+Bild↓` / `Strg+Bild↑` | nächste / vorherige Reiter-Ebene |
+| `+` / `−` (auch Ziffernblock) | Tempo eine Stufe schneller / langsamer |
+| `Num ×` | Tempo normal (1×) |
+| `Strg+F` | Effektleiste ein/aus |
+| `Rücktaste` | alle Effekte zurücksetzen |
 | `Strg+E` | Bearbeitungsmodus ein/aus |
-| `F11` | Vollbild |
+| – (frei belegbar) | Playlist: nächster Titel · Neues Spiel |
+| `Strg+1` … `Strg+9`, `Strg+0` | Reiter 1–10 der angezeigten Ebene (fest) |
+| `F11` | Vollbild (fest) |
 | eigene Kürzel | Kachel auslösen (Kachel-Dialog → Steuerung) |
+
+Player-Tasten haben Vorrang vor den Tastenkürzeln der Kacheln. In Texteingabefeldern und offenen Dialogen sind sie nicht aktiv.
+
+## 15a. Live-Effekte (FX)
+
+Der Knopf **FX** in der Fußzeile öffnet die Effektleiste. Alle Effekte wirken sofort auf alles, was über den **Master** läuft – der Vorhör-Ausgang bleibt unverändert.
+
+| Regler | Wirkung |
+|---|---|
+| **Tempo** | Geschwindigkeit der laufenden Titel, 0,25× bis 16×. Schnelltasten **1× · 2× · 5× · 10×** (Stufen in den Einstellungen änderbar, z. B. `0,5 1 1,5 2 5 10`). Auch neu gestartete Jingles laufen im eingestellten Tempo, bis du zurückstellst. |
+| **Bass** | Tiefen anheben/absenken (−12 … +15 dB) |
+| **Höhen** | Höhen anheben/absenken (−12 … +12 dB) |
+| **Filter** | nach links dumpf (wie aus dem Nebenraum), nach rechts dünn (wie Telefon/Radio) |
+| **Hall** | Raumhall wie in einer großen Halle |
+| **Echo** | Wiederholungen (Echo-Zeit in den Einstellungen) |
+
+Den **Wert oben rechts** antippen oder den Regler doppelklicken setzt einen Effekt zurück, **⟲ Alle aus** setzt alle zurück. Solange ein Effekt aktiv ist, ist der FX-Knopf orange umrandet. Ein eingebauter Limiter verhindert Übersteuerung (z. B. bei viel Bass).
+
+**Tonhöhe beim Tempo:** Standardmäßig klingt ein schnelleres Tempo wie ein schneller laufendes Band (höher, „Mickymaus“) – das funktioniert bei jedem Tempo. Mit *Tonhöhe beim Beschleunigen halten* bleibt die Tonhöhe gleich (bis 4×, darüber automatisch Band-Modus).
+
+**Einrichten** (⚙ Einstellungen → Effekte): welche Regler in der Leiste erscheinen, Tempo-Stufen, Echo-Zeit, automatisches Zurücksetzen, wenn nichts mehr läuft, und **MIDI-Regler**: jedem Effekt einen Fader oder Drehregler eines MIDI-Controllers zuweisen (*♫ Regler zuweisen* → Regler bewegen).
 
 ## 16. Häufige Fragen
 

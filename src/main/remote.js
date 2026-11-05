@@ -16,6 +16,10 @@
  *   GET /api/stopall          sofort alles stoppen
  *   GET /api/tab/<nr>         Reiter wechseln (1, 2, 3 …)
  *   GET /api/reset            alle Zähler zurücksetzen
+ *   GET /api/pause            Pause / Weiter
+ *   GET /api/tempo/<faktor>   Tempo der laufenden Titel (z. B. 1, 2, 5, 10, 0.5)
+ *   GET /api/fx/<name>/<wert> Live-Effekt: bass, treble (dB), filter (−100…100), hall, echo (0…100), tempo
+ *   GET /api/fxreset          alle Effekte zurücksetzen
  */
 const http = require('http');
 const os = require('os');
@@ -24,6 +28,7 @@ let server = null;
 let current = { enabled: false, port: 0, lan: false };
 let state = { tabs: [], playing: [] };
 let sendCommand = () => {};
+const FX_NAMES = ['tempo', 'bass', 'treble', 'filter', 'hall', 'echo'];
 
 function setCommandHandler(fn) { sendCommand = fn; }
 function setState(s) { state = s || state; }
@@ -67,7 +72,7 @@ main{display:grid;gap:8px;padding:10px;grid-template-columns:repeat(auto-fill,mi
 .t.p{box-shadow:0 0 0 4px #fff}
 .t small{position:absolute;left:8px;top:6px;font-size:12px;opacity:.75}
 </style></head><body>
-<header><button onclick="api('fade')">Ausblenden</button><button class="stop" onclick="api('stopall')">STOP</button></header>
+<header><button onclick="api('pause')">⏸ Pause</button><button onclick="api('fade')">Ausblenden</button><button class="stop" onclick="api('stopall')">STOP</button><button onclick="api('tempo/1')">1×</button><button onclick="api('tempo/2')">2×</button><button onclick="api('tempo/5')">5×</button><button onclick="api('tempo/10')">10×</button><button onclick="api('fxreset')">FX aus</button></header>
 <nav id="nav"></nav><main id="grid"></main>
 <script>
 let st={tabs:[],playing:[]},cur=0;
@@ -121,6 +126,21 @@ function handle(req, res) {
       sendCommand({ cmd: 'tab', index: n - 1 });
       return json(res, 200, { ok: true });
     }
+    case 'tempo': {
+      const v = Number(String(arg).replace(',', '.').replace(/x$/i, ''));
+      if (!(v >= 0.25 && v <= 16)) return json(res, 400, { ok: false, error: 'Tempo 0.25 … 16 erwartet' });
+      sendCommand({ cmd: 'tempo', value: v });
+      return json(res, 200, { ok: true });
+    }
+    case 'fx': {
+      const [name, raw] = arg.split('/');
+      const v = Number(String(raw).replace(',', '.'));
+      if (!FX_NAMES.includes(name) || !Number.isFinite(v)) return json(res, 400, { ok: false, error: 'Erwartet /api/fx/<' + FX_NAMES.join('|') + '>/<wert>' });
+      sendCommand({ cmd: 'fx', name, value: v });
+      return json(res, 200, { ok: true });
+    }
+    case 'pause':
+    case 'fxreset':
     case 'fade':
     case 'stopall':
     case 'reset':

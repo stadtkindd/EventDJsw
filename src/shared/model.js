@@ -64,9 +64,61 @@
       midiFade: '',            // MIDI-Zuweisung "Alles ausblenden"
       httpEnabled: false,      // lokale HTTP-Schnittstelle (Stream Deck, Companion)
       httpPort: 8765,
-      httpLan: false           // auch im Netzwerk erreichbar (Tablet/Handy als Fernbedienung)
+      httpLan: false,          // auch im Netzwerk erreichbar (Tablet/Handy als Fernbedienung)
+      // Player-Tasten (je Aktion bis zu zwei Tasten)
+      keys: defaultKeys(),
+      // Live-Effekte
+      fxBarOpen: false,
+      fxModules: FX_MODULES.slice(),     // sichtbare Regler in der Effektleiste (Reihenfolge)
+      tempoPresets: [1, 2, 5, 10],
+      pitchLock: false,                  // Tonhöhe beim Beschleunigen halten
+      echoMs: 375,
+      fxAutoReset: false,                // Effekte zurücksetzen, wenn nichts mehr läuft
+      fxMidi: {}                         // MIDI-Regler je Effekt, z. B. { bass: 'cc:1:7' }
     };
   }
+
+  /** Live-Effekte (Reihenfolge = Standard-Reihenfolge in der Leiste) */
+  const FX_MODULES = ['tempo', 'bass', 'treble', 'filter', 'hall', 'echo'];
+
+  /** Player-Aktionen mit Standardtasten */
+  const PLAYER_ACTIONS = [
+    { id: 'stopAll', label: 'Sofort alles stoppen', keys: ['Enter', 'Shift+Escape'] },
+    { id: 'pause', label: 'Pause / Weiter', keys: ['Space'] },
+    { id: 'fadeAll', label: 'Alles ausblenden', keys: ['Escape'] },
+    { id: 'nextTrack', label: 'Playlist: nächster Titel', keys: [] },
+    { id: 'nextTab', label: 'Nächster Reiter', keys: ['PageDown'] },
+    { id: 'prevTab', label: 'Vorheriger Reiter', keys: ['PageUp'] },
+    { id: 'nextLayer', label: 'Nächste Reiter-Ebene', keys: ['Ctrl+PageDown'] },
+    { id: 'prevLayer', label: 'Vorherige Reiter-Ebene', keys: ['Ctrl+PageUp'] },
+    { id: 'fxBar', label: 'Effektleiste ein/aus', keys: ['Ctrl+F'] },
+    { id: 'fxReset', label: 'Alle Effekte zurücksetzen', keys: ['Backspace'] },
+    { id: 'tempoUp', label: 'Tempo: nächste Stufe', keys: ['+', 'NumAdd'] },
+    { id: 'tempoDown', label: 'Tempo: vorherige Stufe', keys: ['-', 'NumSubtract'] },
+    { id: 'tempoReset', label: 'Tempo: normal (1×)', keys: ['NumMultiply'] },
+    { id: 'edit', label: 'Bearbeiten ein/aus', keys: ['Ctrl+E'] },
+    { id: 'reset', label: 'Neues Spiel (Zähler zurücksetzen)', keys: [] }
+  ];
+
+  function defaultKeys() {
+    const out = {};
+    PLAYER_ACTIONS.forEach((a) => (out[a.id] = a.keys.slice()));
+    return out;
+  }
+
+  function normalizeKeys(k) {
+    const out = defaultKeys();
+    if (!k || typeof k !== 'object') return out;
+    PLAYER_ACTIONS.forEach((a) => {
+      if (Array.isArray(k[a.id])) out[a.id] = k[a.id].filter((x) => typeof x === 'string' && x).slice(0, 2);
+    });
+    return out;
+  }
+
+  /** Höchstzahl Reiter: 10 je Ebene, 3 Ebenen */
+  const TABS_PER_LAYER = 10;
+  const MAX_LAYERS = 3;
+  const MAX_TABS = TABS_PER_LAYER * MAX_LAYERS;
 
   function defaultStyles() {
     return [
@@ -79,13 +131,14 @@
     ];
   }
 
-  function newTab(name, color, cols, rows) {
+  function newTab(name, color, cols, rows, layer) {
     return {
       id: uid('tab'),
       name: name || 'Neuer Reiter',
       color: color || '#1d5fd1',
       cols: cols || 4,
       rows: rows || 3,
+      layer: layer || 0,
       tiles: []
     };
   }
@@ -192,6 +245,7 @@
       color: color(t.color, '#1d5fd1'),
       cols: Math.floor(clamp(t.cols, 1, 12, 4)),
       rows: Math.floor(clamp(t.rows, 1, 12, 3)),
+      layer: t.layer == null ? null : Math.floor(clamp(t.layer, 0, MAX_LAYERS - 1, 0)),  // Reiter-Ebene 0…2
       tiles: Array.isArray(t.tiles) ? t.tiles.map(normalizeTile) : []
     };
     // doppelte Slots auflösen
@@ -247,15 +301,60 @@
       midiFade: str(s.midiFade, ''),
       httpEnabled: !!s.httpEnabled,
       httpPort: Math.floor(clamp(s.httpPort, 1024, 65535, 8765)),
-      httpLan: !!s.httpLan
+      httpLan: !!s.httpLan,
+      keys: normalizeKeys(s.keys),
+      fxBarOpen: !!s.fxBarOpen,
+      fxModules: Array.isArray(s.fxModules) ? s.fxModules.filter((m, i, a) => FX_MODULES.includes(m) && a.indexOf(m) === i) : FX_MODULES.slice(),
+      tempoPresets: normalizePresets(s.tempoPresets),
+      pitchLock: !!s.pitchLock,
+      echoMs: Math.round(clamp(s.echoMs, 50, 1500, 375)),
+      fxAutoReset: !!s.fxAutoReset,
+      fxMidi: normalizeFxMidi(s.fxMidi)
     };
     let styles = Array.isArray(cfg.styles) ? cfg.styles.map(normalizeStyle) : defaultStyles();
     if (!styles.length) styles = defaultStyles();
     let tabs = Array.isArray(cfg.tabs) ? cfg.tabs.map(normalizeTab) : [];
     if (!tabs.length) tabs = [newTab('Reiter 1')];
+    assignLayers(tabs);
     const activeTabId = tabs.some((t) => t.id === cfg.activeTabId) ? cfg.activeTabId : tabs[0].id;
     return { version: SCHEMA_VERSION, settings, styles, tabs, activeTabId };
   }
+
+  function normalizePresets(p) {
+    let list = Array.isArray(p) ? p : [1, 2, 5, 10];
+    list = list.map(Number).filter((x) => Number.isFinite(x) && x >= 0.25 && x <= 16).map((x) => Math.round(x * 100) / 100);
+    list = list.filter((x, i, a) => a.indexOf(x) === i).sort((a, b) => a - b).slice(0, 8);
+    if (!list.includes(1)) list.unshift(1);
+    return list.sort((a, b) => a - b);
+  }
+
+  function normalizeFxMidi(m) {
+    const out = {};
+    if (!m || typeof m !== 'object') return out;
+    FX_MODULES.forEach((k) => { if (typeof m[k] === 'string' && /^cc:\d+:\d+$/.test(m[k])) out[k] = m[k]; });
+    return out;
+  }
+
+  /**
+   * Jeder Reiter gehört zu einer Ebene (0…2), je Ebene höchstens 10 Reiter.
+   * Ältere Konfigurationen ohne Ebene werden der Reihe nach verteilt; volle Ebenen laufen in die nächste über.
+   */
+  function assignLayers(tabs) {
+    const counts = new Array(MAX_LAYERS).fill(0);
+    tabs.forEach((t, i) => {
+      let L = t.layer == null ? Math.min(MAX_LAYERS - 1, Math.floor(i / TABS_PER_LAYER)) : t.layer;
+      while (L < MAX_LAYERS - 1 && counts[L] >= TABS_PER_LAYER) L++;
+      t.layer = L;
+      counts[L]++;
+    });
+    return tabs;
+  }
+
+  /** Reiter einer Ebene in Anzeigereihenfolge */
+  function tabsOfLayer(tabs, layer) { return tabs.filter((t) => (t.layer || 0) === layer); }
+
+  /** Anzahl der benutzten Ebenen (mindestens 1) */
+  function layerCount(tabs) { return 1 + (tabs || []).reduce((m, t) => Math.max(m, t.layer || 0), 0); }
 
   /** Effektives Aussehen einer Kachel (Stil + Überschreibungen) */
   function resolveLook(cfg, tile) {
@@ -318,7 +417,9 @@
     SCHEMA_VERSION, AUDIO_EXTENSIONS, uid, defaultConfig, defaultSettings, defaultStyles,
     newTab, newTile, normalizeConfig, normalizeTile, normalizeTab, normalizeStyle, normalizeTrack,
     tileFiles, tileHasAudio, normalizeGain,
-    resolveLook, effectiveRows, freeSlots, moveTile, resetCounters, isAudioFile, titleFromFileName
+    resolveLook, effectiveRows, freeSlots, moveTile, resetCounters, isAudioFile, titleFromFileName,
+    FX_MODULES, PLAYER_ACTIONS, defaultKeys, normalizeKeys, normalizePresets,
+    TABS_PER_LAYER, MAX_LAYERS, MAX_TABS, assignLayers, tabsOfLayer, layerCount
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

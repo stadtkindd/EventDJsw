@@ -8,7 +8,7 @@
 
 | Bereich | Was EventDJ kann |
 |---|---|
-| **Reiter** | Beliebig viele Reiter, frei benennbar und farbig (z. B. *Während des Spiels*, *Satzpausen*, *Hymnen*). Reihenfolge per Ziehen oder Pfeiltasten änderbar. |
+| **Reiter** | Bis zu 30 Reiter auf 3 umschaltbaren Reiterleisten (je 10), immer gleich breit und ohne Scrollbalken – lange Namen werden automatisch eingepasst. Frei benennbar und farbig (z. B. *Während des Spiels*, *Satzpausen*, *Hymnen*). |
 | **Kachel-Matrix** | Pro Reiter frei wählbar (1–12 Spalten × 1–12 Zeilen). Die Kacheln füllen den Bildschirm automatisch aus. |
 | **Jingles** | MP3, WAV, OGG, FLAC, M4A/AAC, OPUS, WEBM – per Drag & Drop aus dem Explorer oder über den Datei-Dialog. |
 | **Fades** | Kurzes Fade-In beim Start, Fade-Out beim Stoppen. Dauer global und pro Kachel einstellbar. Neuer Jingle blendet den laufenden automatisch aus (Crossfade) – oder alles gleichzeitig. |
@@ -21,6 +21,8 @@
 | **Wellenform-Editor** | Start- und Endpunkt per Finger oder Maus direkt in der Wellenform setzen. Am Endpunkt blendet der Jingle automatisch aus; Schleifen laufen zwischen Start und Ende. |
 | **Lautheit** | Automatische Messung (LUFS nach ITU-R BS.1770) und Angleichung aller Jingles auf eine Ziel-Lautheit – kein Jingle fällt mehr aus der Reihe. Pegelanzeige (VU-Meter) mit Clip-Warnung. |
 | **Playlists & Ducking** | Kacheln mit mehreren Titeln (nacheinander oder zufällig, wiederholbar). Als *Hintergrundmusik* laufen sie unter Jingles weiter und werden währenddessen automatisch abgesenkt. |
+| **Live-Effekte** | Effektleiste mit Fadern für **Tempo** (1×/2×/5×/10× und stufenlos), **Bass**, **Höhen**, **Filter**, **Hall** und **Echo** – live auf dem Master, per MIDI-Fader steuerbar. |
+| **Player-Tasten** | Frei belegbar: standardmäßig `Enter` = sofort alles stoppen, `Leertaste` = Pause, `Esc` = ausblenden, `+`/`−` = Tempo u. v. m. |
 | **Fernsteuerung** | Tastenkürzel pro Kachel, **MIDI-Controller** (Pads, Tasten, Regler) mit Lernfunktion, **HTTP-Schnittstelle** für Elgato Stream Deck / Bitfocus Companion und eine Browser-Fernbedienung fürs Tablet/Handy. |
 
 ## Download & Installation
@@ -57,8 +59,11 @@ Ausführliche Anleitung: **[docs/BEDIENUNGSANLEITUNG.md](docs/BEDIENUNGSANLEITUN
 | Jingle abspielen / ausblenden | Kachel antippen | Klick |
 | Kontextmenü (Vorhören, Bearbeiten, Verschieben, Zähler, Löschen) | lange drücken | Rechtsklick |
 | Alles ausblenden | „Ausblenden“ | `Esc` |
-| Sofort alles stoppen | „STOP“ | `Umschalt+Esc` |
-| Reiter wechseln | Reiter antippen | `Strg+1` … `Strg+9` |
+| Sofort alles stoppen | „STOP“ | `Enter` / `Umschalt+Esc` |
+| Pause / Weiter | ❚❚ | `Leertaste` |
+| Reiter wechseln | Reiter antippen | `Strg+1` … `Strg+0`, `Bild↑`/`Bild↓` |
+| Reiter-Ebene wechseln | **1 · 2 · 3** neben den Reitern | `Strg+Bild↑`/`Strg+Bild↓` |
+| Live-Effekte | **FX** | `Strg+F`, Tempo `+`/`−` |
 | Jingle per Tastenkürzel / MIDI | – | eigene Taste (z. B. `F1`) bzw. Pad am Controller |
 | Playlist: nächster Titel | lange drücken → *Nächster Titel* oder ⏭ in der Fußzeile | Rechtsklick |
 | Bearbeitungsmodus | ✎ | `Strg+E` |

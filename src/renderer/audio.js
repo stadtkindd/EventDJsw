@@ -38,16 +38,23 @@
 
   // ------------------------------------------------------------------ Busse
 
-  function createBus(name) {
+  function createBus(name, withFx) {
     const AC = window.AudioContext || window.webkitAudioContext;
     const ctx = new AC({ latencyHint: 'interactive' });
     const input = ctx.createGain();
     input.channelCount = 2;
     input.channelCountMode = 'explicit';
     input.channelInterpretation = 'speakers';
-    input.connect(ctx.destination);
+    let out = input;
+    let fx = null;
+    if (withFx) {
+      fx = createFxChain(ctx);
+      input.connect(fx.input);
+      out = fx.output;
+    }
+    out.connect(ctx.destination);
     const splitter = ctx.createChannelSplitter(2);
-    input.connect(splitter);
+    out.connect(splitter);
     const meters = [0, 1].map((ch) => {
       const a = ctx.createAnalyser();
       a.fftSize = 1024;
@@ -55,13 +62,86 @@
       splitter.connect(a, ch);
       return a;
     });
-    return { name, ctx, input, meters, sinkId: '', meterBuf: new Float32Array(1024), peakHold: [0, 0], peakHoldAt: [0, 0] };
+    return { name, ctx, input, fx, meters, sinkId: '', meterBuf: new Float32Array(1024), peakHold: [0, 0], peakHoldAt: [0, 0] };
   }
+
+  // ------------------------------------------------------------------ Live-Effekte (nur Master)
+  //
+  //  Eingang → Bass (Low-Shelf) → Höhen (High-Shelf) → Tiefpass → Hochpass ─┬→ trocken ──────────┐
+  //                                                                         ├→ Hall (Faltung) ──┤→ Limiter → Ausgang
+  //                                                                         └→ Echo (Delay+FB) ─┘
+
+  function makeImpulse(ctx, seconds, decay) {
+    const sr = ctx.sampleRate;
+    const len = Math.floor(sr * seconds);
+    const pre = Math.floor(sr * 0.012);
+    const buf = ctx.createBuffer(2, len, sr);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = pre; i < len; i++) {
+        const t = (i - pre) / (len - pre);
+        d[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, decay);
+      }
+    }
+    return buf;
+  }
+
+  function createFxChain(ctx) {
+    const input = ctx.createGain();
+    const bass = ctx.createBiquadFilter();
+    bass.type = 'lowshelf'; bass.frequency.value = 110; bass.gain.value = 0;
+    const treble = ctx.createBiquadFilter();
+    treble.type = 'highshelf'; treble.frequency.value = 5500; treble.gain.value = 0;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = ctx.sampleRate / 2; lp.Q.value = 0.9;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass'; hp.frequency.value = 10; hp.Q.value = 0.9;
+    input.connect(bass); bass.connect(treble); treble.connect(lp); lp.connect(hp);
+
+    const sum = ctx.createGain();
+    hp.connect(sum); // trocken
+
+    const conv = ctx.createConvolver();
+    conv.buffer = makeImpulse(ctx, 3.2, 2.6);
+    const hallWet = ctx.createGain(); hallWet.gain.value = 0;
+    hp.connect(hallWet); hallWet.connect(conv); conv.connect(sum);
+
+    const delay = ctx.createDelay(2);
+    delay.delayTime.value = 0.375;
+    const fb = ctx.createGain(); fb.gain.value = 0.42;
+    const fbTone = ctx.createBiquadFilter(); fbTone.type = 'lowpass'; fbTone.frequency.value = 3800;
+    const echoWet = ctx.createGain(); echoWet.gain.value = 0;
+    hp.connect(echoWet); echoWet.connect(delay);
+    delay.connect(fbTone); fbTone.connect(fb); fb.connect(delay);
+    delay.connect(sum);
+
+    // Schutz vor Übersteuerung (Bass-Anhebung, Hall, Echo)
+    const limiter = ctx.createDynamicsCompressor();
+    limiter.threshold.value = -1.5; limiter.knee.value = 0; limiter.ratio.value = 20;
+    limiter.attack.value = 0.002; limiter.release.value = 0.15;
+    sum.connect(limiter);
+
+    return { input, output: limiter, bass, treble, lp, hp, hallWet, echoWet, delay, fb };
+  }
+
+  /** Neutralwerte und Wertebereiche der Effekte */
+  const FX_DEFS = {
+    tempo: { min: 0.25, max: 16, neutral: 1 },
+    bass: { min: -12, max: 15, neutral: 0 },      // dB
+    treble: { min: -12, max: 12, neutral: 0 },    // dB
+    filter: { min: -100, max: 100, neutral: 0 },  // −100 = dumpf (Tiefpass) … +100 = dünn (Hochpass)
+    hall: { min: 0, max: 100, neutral: 0 },       // %
+    echo: { min: 0, max: 100, neutral: 0 }        // %
+  };
 
   const engine = {
     sinks: { master: 'default', cue: '' },
     busVolume: { master: 1, cue: 1 },
     duck: { level: 0.25, fadeMs: 500 },
+    fxDefs: FX_DEFS,
+    fx: { tempo: 1, bass: 0, treble: 0, filter: 0, hall: 0, echo: 0 },
+    pitchLock: false,
+    paused: false,
     buses: {},
     voices: new Map(),
     warm: new Map(),
@@ -76,7 +156,8 @@
 
     bus(name) {
       if (!this.buses[name]) {
-        this.buses[name] = createBus(name);
+        this.buses[name] = createBus(name, name === 'master');
+        if (name === 'master') this._applyFxNodes(true);
         this.applyBusSink(name);
         this.buses[name].input.gain.value = this.busVolume[name] == null ? 1 : this.busVolume[name];
       }
@@ -118,6 +199,124 @@
       this.busVolume[bus] = Math.min(1, Math.max(0, Number(vol) || 0));
       const b = this.buses[bus];
       if (b) b.input.gain.setTargetAtTime(this.busVolume[bus], b.ctx.currentTime, 0.02);
+    },
+
+    // ---------------------------------------------------- Live-Effekte
+
+    /** Effektwert setzen (Name aus FX_DEFS); Tempo wirkt auf alle Master-Titel */
+    setFx(name, value) {
+      const def = FX_DEFS[name];
+      if (!def) return;
+      let v = Number(value);
+      if (!Number.isFinite(v)) v = def.neutral;
+      v = Math.min(def.max, Math.max(def.min, v));
+      this.fx[name] = v;
+      if (name === 'tempo') this._applyTempoAll();
+      else this._applyFxNodes(false);
+      emit('fx', { name, value: v });
+    },
+
+    resetFx() {
+      Object.keys(FX_DEFS).forEach((k) => { this.fx[k] = FX_DEFS[k].neutral; });
+      this._applyTempoAll();
+      this._applyFxNodes(false);
+      emit('fx', { name: '*' });
+    },
+
+    /** true, wenn irgendein Effekt vom Neutralwert abweicht */
+    fxActive() {
+      return Object.keys(FX_DEFS).some((k) => Math.abs(this.fx[k] - FX_DEFS[k].neutral) > 1e-6);
+    },
+
+    setEchoTime(ms) {
+      this.echoMs = Math.min(1500, Math.max(50, Number(ms) || 375));
+      this._applyFxNodes(false);
+    },
+
+    setPitchLock(on) {
+      this.pitchLock = !!on;
+      this._applyTempoAll();
+    },
+
+    _applyFxNodes(immediate) {
+      const b = this.buses.master;
+      if (!b || !b.fx) return;
+      const fx = b.fx, f = this.fx, ctx = b.ctx, t = ctx.currentTime;
+      const set = (param, val) => {
+        if (immediate) param.value = val;
+        else { param.cancelScheduledValues(t); param.setTargetAtTime(val, t, 0.03); }
+      };
+      set(fx.bass.gain, f.bass);
+      set(fx.treble.gain, f.treble);
+      const nyq = ctx.sampleRate / 2;
+      const x = f.filter / 100;
+      set(fx.lp.frequency, x < 0 ? 20000 * Math.pow(250 / 20000, -x) : nyq);
+      set(fx.hp.frequency, x > 0 ? 20 * Math.pow(2500 / 20, x) : 10);
+      // Hall/Echo: Anteil quadratisch, damit der Regler unten feinfühlig ist
+      set(fx.hallWet.gain, Math.pow(f.hall / 100, 2) * 1.6);
+      set(fx.echoWet.gain, Math.pow(f.echo / 100, 1.5) * 0.85);
+      set(fx.fb.gain, 0.3 + 0.3 * (f.echo / 100));
+      set(fx.delay.delayTime, (this.echoMs || 375) / 1000);
+    },
+
+    _rateFor(v) { return v.bus === 'master' ? this.fx.tempo : 1; },
+
+    _applyTempo(v) {
+      const r = this._rateFor(v);
+      const a = v.audio;
+      try {
+        // Ohne Tonhöhenkorrektur klingt es wie ein schneller laufendes Band („Mickymaus“)
+        a.preservesPitch = this.pitchLock && r <= 4;
+        a.defaultPlaybackRate = r;
+        a.playbackRate = r;
+      } catch (e) { /* ignorieren */ }
+    },
+
+    _applyTempoAll() {
+      this.voices.forEach((v) => this._applyTempo(v));
+    },
+
+    // ---------------------------------------------------- Pause
+
+    /** Pause/Weiter für alle laufenden Titel. Rückgabe: true = jetzt pausiert */
+    togglePause() {
+      let running = false;
+      this.voices.forEach((v) => { if (!v.paused && (v.state === 'playing' || v.state === 'fading')) running = true; });
+      if (running) this.pauseAll(); else this.resumeAll();
+      return this.paused;
+    },
+
+    pauseAll() {
+      const now = performance.now();
+      this.voices.forEach((v) => {
+        if (v.paused || (v.state !== 'playing' && v.state !== 'fading')) return;
+        v.paused = true;
+        v.pausedAt = now;
+        try { v.audio.pause(); } catch (e) { /* ignorieren */ }
+      });
+      this.paused = this._anyPaused();
+      emit('change', { type: 'pause' });
+    },
+
+    resumeAll() {
+      const now = performance.now();
+      this.voices.forEach((v) => {
+        if (!v.paused) return;
+        const shift = now - v.pausedAt;
+        v.startedAt += shift;
+        if (v.fadeOutStart != null) v.fadeOutStart += shift;
+        v.paused = false;
+        v.audio.play().catch((err) => emit('error', { voice: v, error: String((err && err.message) || err) }));
+      });
+      this.paused = false;
+      this.ensureTimer();
+      emit('change', { type: 'resume' });
+    },
+
+    _anyPaused() {
+      let p = false;
+      this.voices.forEach((v) => { if (v.paused) p = true; });
+      return p;
     },
 
     setDucking(level, fadeMs) {
@@ -238,12 +437,15 @@
         fadeOutStart: null,
         fadeOutFrom: 1,
         env: 0,
+        paused: false,
+        pausedAt: 0,
         state: 'starting'
       };
       if (tracks) this._setTrackMeta(voice);
       // native Schleife nur, wenn kein Start-/Endpunkt gesetzt ist (lückenlos)
       audio.loop = !tracks && voice.loop && !voice.startAt && !voice.endAt;
       audio.volume = 1;
+      this._applyTempo(voice);
       this.voices.set(voice.id, voice);
       emit('change', { type: 'start', voice });
 
@@ -310,6 +512,7 @@
       }
       this._setTrackMeta(v);
       v.audio.src = fileUrl(v.tracks[v.order[v.trackPos]].file);
+      this._applyTempo(v);
       if (manual) { v.startedAt = performance.now(); v.fadeIn = Math.max(v.fadeIn, 250); }
       v.audio.play().catch((err) => emit('error', { voice: v, error: String((err && err.message) || err) }));
       emit('change', { type: 'track', voice: v });
@@ -321,20 +524,21 @@
 
     isBedDucked() {
       let jingle = false;
-      this.voices.forEach((v) => { if (v.bus === 'master' && v.role !== 'bed' && v.state === 'playing') jingle = true; });
+      this.voices.forEach((v) => { if (v.bus === 'master' && v.role !== 'bed' && v.state === 'playing' && !v.paused) jingle = true; });
       return jingle;
     },
 
     tick(now, dt) {
       const duckOn = this.isBedDucked();
       this.voices.forEach((v) => {
+        if (v.paused) return; // Pegel und Blenden ruhen während der Pause
         // Endpunkt: rechtzeitig automatisch ausblenden bzw. Schleife
         if (v.endAt > 0 && v.state === 'playing' && !v.audio.paused) {
           const t = v.audio.currentTime;
           if (v.loop) {
             if (t >= v.endAt) v.audio.currentTime = v.startAt || 0;
           } else {
-            const left = (v.endAt - t) * 1000;
+            const left = ((v.endAt - t) * 1000) / (v.audio.playbackRate || 1);
             if (left <= Math.max(30, v.fadeOut)) this.stop(v.id, true, Math.max(30, left));
           }
         }
@@ -380,7 +584,7 @@
       const v = this.voices.get(voiceId);
       if (!v) return;
       const ms = fadeMs != null ? fadeMs : v.fadeOut;
-      if (!fade || ms <= 0 || v.state === 'starting') { this.finish(v, 'stopped'); return; }
+      if (!fade || ms <= 0 || v.state === 'starting' || v.paused) { this.finish(v, 'stopped'); return; }
       if (v.fadeOutStart != null) { this.finish(v, 'stopped'); return; } // zweiter Stopp = sofort aus
       v.fadeOutFrom = v.env;
       v.fadeOut = ms;
@@ -400,6 +604,7 @@
       v.audio.removeAttribute('src');
       try { v.audio.load(); } catch (e) { /* ignorieren */ }
       this.voices.delete(v.id);
+      if (this.paused && !this._anyPaused()) this.paused = false;
       emit('change', { type: 'end', voice: v, reason });
     },
 
@@ -410,14 +615,20 @@
     // Bereits ausblendende Voices laufen beim Ausblenden ungestört weiter
     stopBus(bus, fade, fadeMs, filter) {
       this.voices.forEach((v) => {
-        if (v.bus !== bus || (fade && v.fadeOutStart != null)) return;
+        if (v.bus !== bus) return;
         if (filter && !filter(v)) return;
+        if (v.paused) { this.finish(v, 'stopped'); return; }
+        if (fade && v.fadeOutStart != null) return;
         this.stop(v.id, fade, fadeMs);
       });
     },
 
     stopAll(fade, fadeMs) {
-      this.voices.forEach((v) => { if (!(fade && v.fadeOutStart != null)) this.stop(v.id, fade, fadeMs); });
+      this.voices.forEach((v) => {
+        if (v.paused) this.finish(v, 'stopped');
+        else if (!(fade && v.fadeOutStart != null)) this.stop(v.id, fade, fadeMs);
+      });
+      this.paused = false;
     },
 
     voicesForTile(tileId, bus) {

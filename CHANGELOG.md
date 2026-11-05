@@ -1,5 +1,16 @@
 # Änderungen
 
+## 1.2.0 – 2026-11-05
+
+- **Reiterleiste neu:** alle Reiter immer gleich breit (10 Plätze je Leiste), kein Scrollbalken mehr. Lange Namen werden automatisch verkleinert bzw. zweizeilig eingepasst.
+- **Reiter-Ebenen:** bis zu 3 Reiterleisten à 10 Reiter (max. 30), Umschalter **1 · 2 · 3** links neben den Reitern. Reiter per Dialog, Rechtsklick oder Ziehen auf die Ebenen-Taste verschieben.
+- **Live-Effektleiste (FX):** Regler für **Tempo** (0,25×–16×, Schnelltasten 1×/2×/5×/10×, Stufen frei einstellbar), **Bass**, **Höhen**, **Filter** (dumpf ↔ Telefon), **Hall** und **Echo** – wirkt live auf den Master, Vorhören bleibt unberührt. Sichtbare Regler wählbar, Limiter gegen Übersteuern, MIDI-Fader zuweisbar, optional Tonhöhe halten.
+- **Pause:** alles anhalten und fortsetzen (Leertaste oder Knopf ❚❚), Blenden laufen danach korrekt weiter.
+- **Player-Tasten frei belegbar** (Einstellungen → Tasten): Standard `Enter` = sofort alles stoppen, `Leertaste` = Pause, `Esc` = ausblenden, `Bild↑/↓` = Reiter, `Strg+Bild↑/↓` = Ebene, `+`/`−` = Tempo, `Strg+F` = Effektleiste, `Rücktaste` = Effekte aus u. a.
+- `Strg+1` … `Strg+9`, `Strg+0` wählen die Reiter der angezeigten Ebene.
+- Restzeit berücksichtigt das Tempo.
+- HTTP-Fernsteuerung: neue Befehle `/api/pause`, `/api/tempo/<faktor>`, `/api/fx/<name>/<wert>`, `/api/fxreset`; Browser-Fernbedienung mit Pause- und Tempo-Knöpfen.
+
 ## 1.1.0 – 2026-11-02
 
 - **Wellenform-Editor:** Start- und Endpunkt per Touch/Maus setzen, automatisches Ausblenden am Endpunkt, Schleife zwischen Start und Ende, Abspielposition beim Vorhören
